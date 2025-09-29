@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Panel de Administración{% endblock %}
+{% block content %}
+<div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-6xl mx-auto my-12">
+    <div class="flex justify-between items-center mb-6 border-b pb-4">
+        <h2 class="text-2xl font-bold text-gray-800">Panel de Administración de Usuarios</h2>
+        <a href="{{ url_for('menu') }}" class="text-sm text-blue-600 hover:underline">Volver al Menú</a>
+    </div>
+
+    <table class="min-w-full bg-white">
+        <thead class="bg-gray-100">
+            <tr>
+                <th class="text-left py-3 px-4 font-semibold text-sm">Nombre Completo</th>
+                <th class="text-left py-3 px-4 font-semibold text-sm">Email</th>
+                <th class="text-left py-3 px-4 font-semibold text-sm">Roles</th>
+                <th class="text-left py-3 px-4 font-semibold text-sm">Estado</th>
+                <th class="text-left py-3 px-4 font-semibold text-sm">Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for usuario in usuarios %}
+            <tr class="border-b">
+                <td class="py-3 px-4">{{ usuario.nombre_completo }}</td>
+                <td class="py-3 px-4">{{ usuario.email }}</td>
+                <td class="py-3 px-4">{{ usuario.roles or 'Sin roles' }}</td>
+                <td class="py-3 px-4">
+                    {% if usuario.esta_activo %}
+                        <span class="bg-green-200 text-green-800 text-xs font-semibold mr-2 px-2.5 py-0.5 rounded-full">Activo</span>
+                    {% else %}
+                        <span class="bg-red-200 text-red-800 text-xs font-semibold mr-2 px-2.5 py-0.5 rounded-full">Bloqueado</span>
+                    {% endif %}
+                </td>
+                <td class="py-3 px-4">
+                    <a href="{{ url_for('editar_usuario', user_id=usuario.id) }}" class="text-blue-600 hover:underline">Editar</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

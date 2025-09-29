@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Buscador de Documentos{% endblock %}
+
+{% block content %}
+<div class="w-full max-w-6xl mx-auto">
+<div class="bg-white p-8 rounded-xl shadow-lg w-full">
+    <div class="flex justify-center items-center space-x-6 mb-6">
+        <img src="{{ url_for('static', filename='logoRedAps.png') }}" alt="Logo Red de Atención Primaria" class="h-20">
+        <img src="{{ url_for('static', filename='logoMaho.png') }}" alt="Logo Municipalidad Alto Hospicio" class="h-20">
+    </div>
+    <h2 class="text-2xl font-bold text-center text-gray-800 mb-8">Buscador de Registro Clínico Físico Digitalizado</h2>
+
+    <div class="flex justify-between items-center mb-4">
+        <p class="text-gray-600">Bienvenido, {{ current_user.nombre_completo }}</p>
+        <div>
+            <a href="{{ url_for('menu') }}" class="text-sm text-gray-600 hover:underline">Volver al Menú</a>
+            <a href="{{ url_for('logout') }}" class="text-sm text-blue-600 hover:underline ml-4">Cerrar Sesión</a>
+        </div>
+    </div>
+    
+    <form method="get" action="{{ url_for('buscador') }}" class="space-y-4 p-6 border rounded-lg bg-gray-50">
+        <input type="hidden" name="categoria" value="{{ categoria }}">
+        
+        <div class="flex items-center gap-4">
+            <input type="text" name="busqueda" value="{{ busqueda_actual }}" placeholder="Ingresa un RUT o nombre..." class="flex-grow px-4 py-2 border border-gray-300 rounded-lg">
+            <a href="{{ url_for('buscador', categoria=categoria) }}" class="btn btn-secondary">Limpiar</a>
+            <button type="submit" class="btn btn-primary">Buscar</button>
+        </div>
+
+        <div>
+            <textarea name="motivo" rows="2" placeholder="Ingresa el motivo de la búsqueda..." class="w-full px-4 py-2 border border-gray-300 rounded-lg" required>{{ motivo_actual or '' }}</textarea>
+        </div>
+    </form>
+
+    <div class="mt-8">
+        {% if busqueda_actual %}
+            <h3 class="text-lg font-semibold text-gray-700 mb-4">Resultados para: <span class="font-normal">{{ busqueda_actual }}</span></h3>
+            
+            {% if resultados %}
+                <ul class="space-y-3">
+                {% for resultado in resultados %}
+                    <li class="bg-gray-50 p-4 rounded-lg border border-gray-200 flex justify-between items-center">
+                        <div class="flex items-center gap-4">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span class="text-gray-800">{{ resultado.nombre_completo }}</span>
+                        </div>
+                        <a href="{{ url_for('servir_documento', categoria=resultado.categoria, nombre_archivo=resultado.nombre_archivo) }}" 
+                           target="_blank" 
+                           class="btn btn-primary">
+                            Visualizar
+                        </a>
+                    </li>
+                {% endfor %}
+                </ul>
+            {% else %}
+                <p class="text-center text-gray-500 bg-yellow-50 border border-yellow-200 p-4 rounded-lg">No se encontraron documentos que coincidan con tu búsqueda.</p>
+            {% endif %}
+        
+        {% elif categoria %}
+             <p class="text-center text-gray-500">Ingresa un término de búsqueda y un motivo para comenzar.</p>
+        {% endif %}
+    </div>
+</div>
+</div>
+{% endblock %}
