@@ -7,6 +7,31 @@
         <a href="{{ url_for('admin_panel') }}" class="text-sm text-blue-600 hover:underline">Volver al Panel de Admin</a>
     </div>
 
+    <form method="get" action="{{ url_for('ver_logs') }}" class="bg-gray-50 p-4 rounded-lg mb-6 flex items-center gap-4">
+        <div class="flex-1">
+            <label for="filtro_usuario" class="block text-sm font-medium text-gray-700">Filtrar por Usuario:</label>
+            <select name="usuario_id" id="filtro_usuario" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                <option value="">Todos los usuarios</option>
+                {% for user in todos_los_usuarios %}
+                    <option value="{{ user.id }}" {% if user.id == filtros.usuario_id|int %}selected{% endif %}>{{ user.nombre_completo }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="flex-1">
+            <label for="filtro_categoria" class="block text-sm font-medium text-gray-700">Filtrar por Categoría:</label>
+            <select name="categoria" id="filtro_categoria" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                <option value="">Todas las categorías</option>
+                {% for cat in todas_las_categorias %}
+                    <option value="{{ cat.nombre }}" {% if cat.nombre == filtros.categoria %}selected{% endif %}>{{ cat.nombre }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="flex items-end h-full">
+            <button type="submit" class="btn btn-primary">Filtrar</button>
+            <a href="{{ url_for('ver_logs') }}" class="btn btn-secondary ml-2">Limpiar</a>
+        </div>
+    </form>
+
     <table class="min-w-full bg-white">
         <thead class="bg-gray-100">
             <tr>
@@ -28,10 +53,34 @@
             </tr>
             {% else %}
             <tr>
-                <td colspan="5" class="text-center py-4 text-gray-500">No hay registros de búsqueda todavía.</td>
+                <td colspan="5" class="text-center py-4 text-gray-500">No hay registros que coincidan con los filtros.</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+
+    <nav class="mt-6 flex items-center justify-between border-t border-gray-200 px-4 sm:px-0">
+        <div class="flex w-0 flex-1">
+            {% if pagina_actual > 1 %}
+                <a href="{{ url_for('ver_logs', page=pagina_actual-1, **filtros) }}" class="inline-flex items-center border-t-2 border-transparent pr-1 pt-4 text-sm font-medium text-gray-500 hover:border-gray-300 hover:text-gray-700">
+                    &larr; Anterior
+                </a>
+            {% endif %}
+        </div>
+        <div class="hidden md:flex">
+            {% for page_num in range(1, total_paginas + 1) %}
+                <a href="{{ url_for('ver_logs', page=page_num, **filtros) }}" class="inline-flex items-center border-t-2 px-4 pt-4 text-sm font-medium {% if page_num == pagina_actual %} border-indigo-500 text-indigo-600 {% else %} border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 {% endif %}">
+                    {{ page_num }}
+                </a>
+            {% endfor %}
+        </div>
+        <div class="flex w-0 flex-1 justify-end">
+             {% if pagina_actual < total_paginas %}
+                <a href="{{ url_for('ver_logs', page=pagina_actual+1, **filtros) }}" class="inline-flex items-center border-t-2 border-transparent pl-1 pt-4 text-sm font-medium text-gray-500 hover:border-gray-300 hover:text-gray-700">
+                    Siguiente &rarr;
+                </a>
+            {% endif %}
+        </div>
+    </nav>
 </div>
 {% endblock %}

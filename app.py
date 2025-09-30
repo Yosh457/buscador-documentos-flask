@@ -2,6 +2,7 @@
 
 import os
 import pymysql
+import math
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, abort, send_from_directory
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -464,27 +465,75 @@ def servir_documento():
     directorio, nombre_archivo = os.path.split(ruta_archivo)
     return send_from_directory(directorio, nombre_archivo)
 
-# --- ¡NUEVA RUTA PARA VISUALIZAR LOS LOGS! ---
+# --- ¡NUEVA RUTA PARA VISUALIZAR LOS LOGS (CON FILTROS Y PAGINACIÓN)! ---
 @app.route('/admin/logs')
 @login_required
 @admin_required
 def ver_logs():
+    # --- Configuración de Paginación ---
+    LOGS_POR_PAGINA = 15
+    pagina_actual = request.args.get('page', 1, type=int)
+    offset = (pagina_actual - 1) * LOGS_POR_PAGINA
+
+    # --- Lógica de Filtros ---
+    filtro_usuario_id = request.args.get('usuario_id', '')
+    filtro_categoria = request.args.get('categoria', '')
+    
+    # Construimos la consulta SQL dinámicamente para seguridad
+    clausulas_where = []
+    parametros = []
+    
+    if filtro_usuario_id:
+        clausulas_where.append("l.usuario_id = %s")
+        parametros.append(filtro_usuario_id)
+    if filtro_categoria:
+        clausulas_where.append("l.categoria_buscada = %s")
+        parametros.append(filtro_categoria)
+        
+    where_sql = " AND ".join(clausulas_where) if clausulas_where else "1=1"
+
     conn = pymysql.connect(**db_config)
     try:
         with conn.cursor() as cursor:
-            # Hacemos un JOIN para obtener el nombre del usuario en lugar de solo su ID
-            sql = """
+            # 1. Obtenemos el TOTAL de registros que coinciden con los filtros (para calcular las páginas)
+            sql_count = f"SELECT COUNT(l.id) as total FROM log_busquedas l WHERE {where_sql}"
+            cursor.execute(sql_count, tuple(parametros))
+            total_logs = cursor.fetchone()['total']
+            total_paginas = math.ceil(total_logs / LOGS_POR_PAGINA)
+
+            # 2. Obtenemos la PORCIÓN de registros para la página actual
+            sql_select = f"""
                 SELECT l.*, u.nombre_completo 
                 FROM log_busquedas l
                 JOIN usuarios u ON l.usuario_id = u.id
+                WHERE {where_sql}
                 ORDER BY l.timestamp DESC
+                LIMIT %s OFFSET %s
             """
-            cursor.execute(sql)
+            cursor.execute(sql_select, tuple(parametros) + (LOGS_POR_PAGINA, offset))
             logs = cursor.fetchall()
+            
+            # 3. Obtenemos todos los usuarios y categorías para llenar los dropdowns de los filtros
+            cursor.execute("SELECT id, nombre_completo FROM usuarios ORDER BY nombre_completo")
+            todos_los_usuarios = cursor.fetchall()
+            cursor.execute("SELECT nombre FROM categorias ORDER BY nombre")
+            todas_las_categorias = cursor.fetchall()
     finally:
         conn.close()
     
-    return render_template('ver_logs.html', logs=logs)
+    # Guardamos los filtros actuales para pasarlos a los enlaces de paginación
+    filtros_activos = {
+        'usuario_id': filtro_usuario_id,
+        'categoria': filtro_categoria
+    }
+
+    return render_template('ver_logs.html', 
+                           logs=logs,
+                           pagina_actual=pagina_actual,
+                           total_paginas=total_paginas,
+                           todos_los_usuarios=todos_los_usuarios,
+                           todas_las_categorias=todas_las_categorias,
+                           filtros=filtros_activos)
 
 if __name__ == '__main__':
     app.run(debug=True)
