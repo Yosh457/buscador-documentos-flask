@@ -99,6 +99,47 @@ def load_user(user_id):
         conn.close()
     return None
 
+# --- ¡NUEVA RUTA Y LÓGICA PARA INDEXAR ARCHIVOS! ---
+def actualizar_indice():
+    """
+    Escanea las carpetas de red definidas en la tabla 'categorias'
+    y actualiza la tabla 'documentos' con los archivos encontrados.
+    """
+    conn = pymysql.connect(**db_config)
+    archivos_indexados = 0
+    try:
+        with conn.cursor() as cursor:
+            # 1. Obtenemos todas las categorías (ej: Fichas Clínicas y su ruta de red)
+            cursor.execute("SELECT id, ruta_carpeta FROM categorias")
+            categorias = cursor.fetchall()
+
+            # 2. Vaciamos la tabla de documentos para empezar desde cero
+            cursor.execute("TRUNCATE TABLE documentos")
+
+            # 3. Recorremos cada categoría para buscar archivos
+            for categoria in categorias:
+                ruta_base = categoria['ruta_carpeta']
+                categoria_id = categoria['id']
+                
+                if os.path.exists(ruta_base):
+                    # Usamos os.walk() para recorrer todas las subcarpetas
+                    for dirpath, _, filenames in os.walk(ruta_base):
+                        for archivo in filenames:
+                            # Creamos la ruta completa y el nombre del archivo
+                            ruta_completa = os.path.join(dirpath, archivo)
+                            nombre_archivo = archivo
+                            
+                            # Insertamos el archivo en nuestra tabla de índice
+                            sql_insert = "INSERT INTO documentos (nombre_archivo, ruta_completa, categoria_id) VALUES (%s, %s, %s)"
+                            cursor.execute(sql_insert, (nombre_archivo, ruta_completa, categoria_id))
+                            archivos_indexados += 1
+            
+            conn.commit()
+    finally:
+        conn.close()
+    
+    return archivos_indexados
+
 # --- RUTAS DE LA APLICACIÓN ---
 @app.route('/')
 def index():
@@ -185,59 +226,62 @@ def logout():
     flash('Has cerrado sesión exitosamente.', 'success')
     return redirect(url_for('login'))
 
-# --- BUSCADOR (VERSIÓN CORREGIDA Y FINAL) ---
+# --- BUSCADOR (VERSIÓN FINAL OPTIMIZADA CON ÍNDICE) ---
 @app.route('/buscador')
 @login_required
 def buscador():
-    # Obtenemos todos los posibles argumentos de la URL
-    categoria = request.args.get('categoria', '')
+    categoria_nombre = request.args.get('categoria', '')
     termino_busqueda = request.args.get('busqueda', '')
     motivo = request.args.get('motivo', '')
-    
-    # Inicializamos la lista de resultados
     resultados = []
 
-    # Verificamos si el usuario tiene permiso para la categoría
-    carpetas_permitidas = [p['ruta_carpeta'] for p in current_user.permisos]
-    if categoria and categoria not in carpetas_permitidas:
-        flash(f"Acceso denegado a la categoría '{categoria}'.", 'danger')
+    # Obtenemos la información de la categoría actual (nombre y ruta)
+    categoria_actual = next((p for p in current_user.permisos if p['nombre'] == categoria_nombre), None)
+
+    if categoria_nombre and not categoria_actual:
+        flash(f"Acceso denegado a la categoría '{categoria_nombre}'.", 'danger')
         return redirect(url_for('menu'))
 
-    # Si se envió una búsqueda (hay un término de búsqueda en la URL)...
     if termino_busqueda and motivo:
-        ruta_categoria = os.path.join(app.root_path, 'documentos_compartidos', categoria)
-        
-        if os.path.exists(ruta_categoria):
-            # 1. Guardamos la búsqueda en el log
+        if categoria_actual:
+            # --- ¡LA LÓGICA DE BÚSQUEDA AHORA ES UNA CONSULTA SQL! ---
             conn = pymysql.connect(**db_config)
             try:
                 with conn.cursor() as cursor:
-                    sql_log = """
-                        INSERT INTO log_busquedas (usuario_id, categoria_buscada, termino_busqueda, motivo)
-                        VALUES (%s, %s, %s, %s)
+                    # 1. Guardamos la búsqueda en el log
+                    sql_log = "INSERT INTO log_busquedas (usuario_id, categoria_buscada, termino_busqueda, motivo) VALUES (%s, %s, %s, %s)"
+                    cursor.execute(sql_log, (current_user.id, categoria_actual['nombre'], termino_busqueda, motivo))
+                    conn.commit()
+
+                    # 2. Buscamos en la tabla 'documentos' usando LIKE
+                    # El formato f"%{...}%" busca el texto en cualquier parte del nombre del archivo
+                    sql_search = """
+                        SELECT d.nombre_archivo, d.ruta_completa 
+                        FROM documentos d
+                        JOIN categorias c ON d.categoria_id = c.id
+                        WHERE c.nombre = %s AND d.nombre_archivo LIKE %s
                     """
-                    cursor.execute(sql_log, (current_user.id, categoria, termino_busqueda, motivo))
-                conn.commit()
+                    cursor.execute(sql_search, (categoria_nombre, f"%{termino_busqueda}%"))
+                    resultados_db = cursor.fetchall()
+
+                    # Preparamos los resultados para la plantilla
+                    for fila in resultados_db:
+                        ruta_base = categoria_actual['ruta_carpeta']
+                        resultados.append({
+                            'nombre_mostrado': os.path.relpath(fila['ruta_completa'], ruta_base),
+                            'ruta_completa': fila['ruta_completa']
+                        })
             finally:
                 conn.close()
 
-            for archivo in os.listdir(ruta_categoria):
-                if termino_busqueda.lower() in archivo.lower():
-                    # ¡CAMBIO! Ahora guardamos un diccionario con más info
-                    resultados.append({
-                        'nombre_completo': os.path.join(categoria, archivo),
-                        'nombre_archivo': archivo,
-                        'categoria': categoria
-                    })
     elif termino_busqueda and not motivo:
         flash("Debe proporcionar un motivo para realizar la búsqueda.", 'danger')
 
-    # Finalmente, renderizamos la plantilla pasándole todos los datos actuales
     return render_template('buscador.html', 
                            resultados=resultados, 
                            busqueda_actual=termino_busqueda, 
-                           motivo_actual=motivo,  # <-- Pasamos el motivo de vuelta
-                           categoria=categoria)
+                           motivo_actual=motivo,
+                           categoria=categoria_actual)
 
 # --- ¡NUEVA RUTA PARA EL PANEL DE ADMINISTRACIÓN! ---
 @app.route('/admin')
@@ -260,6 +304,15 @@ def admin_panel():
         conn.close()
 
     return render_template('admin_panel.html', usuarios=usuarios)
+
+@app.route('/admin/indexar')
+@login_required
+@admin_required
+def indexar_archivos():
+    # Llamamos a la función que hace el trabajo pesado
+    total_archivos = actualizar_indice()
+    flash(f'¡Indexación completada! Se encontraron y guardaron {total_archivos} documentos en el índice.', 'success')
+    return redirect(url_for('admin_panel'))
 
 # --- ¡NUEVA RUTA PARA EDITAR USUARIOS! ---
 @app.route('/admin/editar/<int:user_id>', methods=['GET', 'POST'])
@@ -310,18 +363,26 @@ def editar_usuario(user_id):
                            todas_las_categorias=todas_las_categorias, 
                            permisos_usuario=permisos_usuario_ids)
 
-# --- ¡NUEVA RUTA PARA SERVIR/DESCARGAR DOCUMENTOS! ---
-@app.route('/documentos/<path:categoria>/<path:nombre_archivo>')
+# --- ¡RUTA PARA SERVIR ARCHIVOS ACTUALIZADA! ---
+# Ahora es más flexible para manejar rutas de red complejas
+@app.route('/documentos')
 @login_required
-def servir_documento(categoria, nombre_archivo):
-    # 1. Verificamos si el usuario tiene permiso para esta categoría
-    carpetas_permitidas = [p['ruta_carpeta'] for p in current_user.permisos]
-    if categoria not in carpetas_permitidas:
-        abort(403) # Error de Acceso Prohibido
+def servir_documento():
+    # Obtenemos la ruta completa del archivo desde los parámetros de la URL
+    ruta_archivo = request.args.get('ruta', '')
+    if not ruta_archivo:
+        abort(404)
 
-    # 2. Si tiene permiso, construimos la ruta y servimos el archivo
-    ruta_documentos = os.path.join(app.root_path, 'documentos_compartidos')
-    return send_from_directory(os.path.join(ruta_documentos, categoria), nombre_archivo)
+    # Verificación de seguridad: Asegurarnos de que el usuario tiene permiso para la carpeta base de este archivo
+    carpetas_permitidas = [p['ruta_carpeta'] for p in current_user.permisos]
+    tiene_permiso = any(ruta_archivo.startswith(base) for base in carpetas_permitidas)
+
+    if not tiene_permiso or not os.path.exists(ruta_archivo):
+        abort(403) # Acceso prohibido si no tiene permiso o el archivo no existe
+
+    # Extraemos el directorio y el nombre del archivo
+    directorio, nombre_archivo = os.path.split(ruta_archivo)
+    return send_from_directory(directorio, nombre_archivo)
 
 if __name__ == '__main__':
     app.run(debug=True)
