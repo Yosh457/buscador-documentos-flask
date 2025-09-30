@@ -314,46 +314,66 @@ def indexar_archivos():
     flash(f'¡Indexación completada! Se encontraron y guardaron {total_archivos} documentos en el índice.', 'success')
     return redirect(url_for('admin_panel'))
 
-# --- ¡NUEVA RUTA PARA EDITAR USUARIOS! ---
+# --- ¡RUTA PARA EDITAR USUARIOS ACTUALIZADA! ---
 @app.route('/admin/editar/<int:user_id>', methods=['GET', 'POST'])
 @login_required
 @admin_required
 def editar_usuario(user_id):
     conn = pymysql.connect(**db_config)
     try:
-        with conn.cursor() as cursor:
-            # Si se envía el formulario (POST)
-            if request.method == 'POST':
-                # Obtenemos la lista de IDs de los checkboxes marcados
-                nuevos_permisos_ids = request.form.getlist('permisos')
-                
-                # 1. Borramos todos los permisos antiguos de este usuario
-                cursor.execute("DELETE FROM usuario_permisos WHERE usuario_id = %s", (user_id,))
-                
-                # 2. Insertamos los nuevos permisos
-                if nuevos_permisos_ids:
-                    # Preparamos los datos para una inserción múltiple
-                    datos_para_insertar = [(user_id, perm_id) for perm_id in nuevos_permisos_ids]
-                    cursor.executemany("INSERT INTO usuario_permisos (usuario_id, categoria_id) VALUES (%s, %s)", datos_para_insertar)
-                
-                conn.commit()
-                flash(f'Permisos actualizados exitosamente.', 'success')
-                return redirect(url_for('admin_panel'))
+        # --- LÓGICA PARA CUANDO SE ENVÍA EL FORMULARIO (POST) ---
+        if request.method == 'POST':
+            # 1. Obtenemos todos los datos del formulario
+            nuevo_nombre = request.form.get('nombre_completo')
+            nuevo_email = request.form.get('email')
+            nuevo_estado = request.form.get('esta_activo') # Esto será '1' o '0'
+            nuevos_roles_ids = request.form.getlist('roles')
+            nuevos_permisos_ids = request.form.getlist('permisos')
 
-            # Si se carga la página (GET)
-            # 1. Obtenemos los datos del usuario a editar
-            cursor.execute("SELECT id, nombre_completo FROM usuarios WHERE id = %s", (user_id,))
+            with conn.cursor() as cursor:
+                # 2. Actualizamos los datos básicos en la tabla 'usuarios'
+                sql_update_user = "UPDATE usuarios SET nombre_completo = %s, email = %s, esta_activo = %s WHERE id = %s"
+                cursor.execute(sql_update_user, (nuevo_nombre, nuevo_email, nuevo_estado, user_id))
+
+                # 3. Actualizamos los roles (borrar y re-insertar)
+                cursor.execute("DELETE FROM usuario_roles WHERE usuario_id = %s", (user_id,))
+                if nuevos_roles_ids:
+                    datos_roles = [(user_id, rol_id) for rol_id in nuevos_roles_ids]
+                    cursor.executemany("INSERT INTO usuario_roles (usuario_id, role_id) VALUES (%s, %s)", datos_roles)
+
+                # 4. Actualizamos los permisos (borrar y re-insertar)
+                cursor.execute("DELETE FROM usuario_permisos WHERE usuario_id = %s", (user_id,))
+                if nuevos_permisos_ids:
+                    datos_permisos = [(user_id, perm_id) for perm_id in nuevos_permisos_ids]
+                    cursor.executemany("INSERT INTO usuario_permisos (usuario_id, categoria_id) VALUES (%s, %s)", datos_permisos)
+            
+            conn.commit()
+            flash(f'Usuario actualizado exitosamente.', 'success')
+            return redirect(url_for('admin_panel'))
+
+        # --- LÓGICA PARA CUANDO SE CARGA LA PÁGINA (GET) ---
+        with conn.cursor() as cursor:
+            # Obtenemos datos del usuario
+            cursor.execute("SELECT * FROM usuarios WHERE id = %s", (user_id,))
             usuario = cursor.fetchone()
             
-            # 2. Obtenemos TODAS las categorías posibles
+            # Obtenemos todas las categorías posibles
             cursor.execute("SELECT id, nombre FROM categorias")
             todas_las_categorias = cursor.fetchall()
             
-            # 3. Obtenemos los IDs de las categorías que el usuario YA TIENE
+            # Obtenemos los permisos que el usuario ya tiene
             cursor.execute("SELECT categoria_id FROM usuario_permisos WHERE usuario_id = %s", (user_id,))
             permisos_actuales = cursor.fetchall()
-            # Convertimos la lista de diccionarios a una lista simple de IDs para que sea más fácil de usar en la plantilla
             permisos_usuario_ids = [p['categoria_id'] for p in permisos_actuales]
+
+            # Obtenemos todos los roles posibles
+            cursor.execute("SELECT id, nombre FROM roles")
+            todos_los_roles = cursor.fetchall()
+
+            # Obtenemos los roles que el usuario ya tiene
+            cursor.execute("SELECT r.nombre FROM roles r JOIN usuario_roles ur ON r.id = ur.role_id WHERE ur.usuario_id = %s", (user_id,))
+            roles_actuales = cursor.fetchall()
+            roles_usuario_nombres = [r['nombre'] for r in roles_actuales]
 
     finally:
         conn.close()
@@ -361,7 +381,67 @@ def editar_usuario(user_id):
     return render_template('editar_usuario.html', 
                            usuario=usuario, 
                            todas_las_categorias=todas_las_categorias, 
-                           permisos_usuario=permisos_usuario_ids)
+                           permisos_usuario=permisos_usuario_ids,
+                           todos_los_roles=todos_los_roles,
+                           roles_usuario=roles_usuario_nombres)
+
+# --- ¡NUEVA RUTA PARA CREAR USUARIOS DESDE EL PANEL DE ADMIN! ---
+@app.route('/admin/crear', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def crear_usuario():
+    conn = pymysql.connect(**db_config)
+    try:
+        # --- LÓGICA PARA CUANDO SE ENVÍA EL FORMULARIO (POST) ---
+        if request.method == 'POST':
+            nombre = request.form.get('nombre_completo')
+            email = request.form.get('email')
+            password = request.form.get('password')
+            roles_ids = request.form.getlist('roles')
+            permisos_ids = request.form.getlist('permisos')
+
+            with conn.cursor() as cursor:
+                # 1. Verificamos que el email no esté en uso
+                cursor.execute("SELECT email FROM usuarios WHERE email = %s", (email,))
+                if cursor.fetchone():
+                    flash('Ese correo electrónico ya está en uso por otro usuario.', 'danger')
+                    # Si hay error, volvemos a cargar los datos para mostrar el formulario de nuevo
+                    return redirect(url_for('crear_usuario'))
+
+                # 2. Encriptamos la contraseña y creamos el usuario
+                hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
+                cursor.execute("INSERT INTO usuarios (nombre_completo, email, password_hash) VALUES (%s, %s, %s)",
+                               (nombre, email, hashed_password))
+                
+                # 3. Obtenemos el ID del usuario recién creado
+                new_user_id = cursor.lastrowid
+
+                # 4. Asignamos los roles y permisos seleccionados
+                if roles_ids:
+                    datos_roles = [(new_user_id, rol_id) for rol_id in roles_ids]
+                    cursor.executemany("INSERT INTO usuario_roles (usuario_id, role_id) VALUES (%s, %s)", datos_roles)
+                
+                if permisos_ids:
+                    datos_permisos = [(new_user_id, perm_id) for perm_id in permisos_ids]
+                    cursor.executemany("INSERT INTO usuario_permisos (usuario_id, categoria_id) VALUES (%s, %s)", datos_permisos)
+
+            conn.commit()
+            flash('Usuario creado exitosamente.', 'success')
+            return redirect(url_for('admin_panel'))
+
+        # --- LÓGICA PARA CUANDO SE CARGA LA PÁGINA (GET) ---
+        # Necesitamos cargar los roles y categorías para mostrarlos en los checkboxes
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id, nombre FROM roles")
+            todos_los_roles = cursor.fetchall()
+            cursor.execute("SELECT id, nombre FROM categorias")
+            todas_las_categorias = cursor.fetchall()
+    finally:
+        conn.close()
+
+    return render_template('crear_usuario.html', 
+                           todos_los_roles=todos_los_roles, 
+                           todas_las_categorias=todas_las_categorias)
 
 # --- ¡RUTA PARA SERVIR ARCHIVOS ACTUALIZADA! ---
 # Ahora es más flexible para manejar rutas de red complejas
@@ -383,6 +463,28 @@ def servir_documento():
     # Extraemos el directorio y el nombre del archivo
     directorio, nombre_archivo = os.path.split(ruta_archivo)
     return send_from_directory(directorio, nombre_archivo)
+
+# --- ¡NUEVA RUTA PARA VISUALIZAR LOS LOGS! ---
+@app.route('/admin/logs')
+@login_required
+@admin_required
+def ver_logs():
+    conn = pymysql.connect(**db_config)
+    try:
+        with conn.cursor() as cursor:
+            # Hacemos un JOIN para obtener el nombre del usuario en lugar de solo su ID
+            sql = """
+                SELECT l.*, u.nombre_completo 
+                FROM log_busquedas l
+                JOIN usuarios u ON l.usuario_id = u.id
+                ORDER BY l.timestamp DESC
+            """
+            cursor.execute(sql)
+            logs = cursor.fetchall()
+    finally:
+        conn.close()
+    
+    return render_template('ver_logs.html', logs=logs)
 
 if __name__ == '__main__':
     app.run(debug=True)

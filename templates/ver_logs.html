@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Logs de Búsqueda{% endblock %}
+{% block content %}
+<div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-7xl mx-auto my-12">
+    <div class="flex justify-between items-center mb-6 border-b pb-4">
+        <h2 class="text-2xl font-bold text-gray-800">Logs de Búsqueda del Sistema</h2>
+        <a href="{{ url_for('admin_panel') }}" class="text-sm text-blue-600 hover:underline">Volver al Panel de Admin</a>
+    </div>
+
+    <table class="min-w-full bg-white">
+        <thead class="bg-gray-100">
+            <tr>
+                <th class="text-left py-3 px-4 font-semibold text-sm">Fecha y Hora</th>
+                <th class="text-left py-3 px-4 font-semibold text-sm">Usuario</th>
+                <th class="text-left py-3 px-4 font-semibold text-sm">Categoría Buscada</th>
+                <th class="text-left py-3 px-4 font-semibold text-sm">Término de Búsqueda</th>
+                <th class="text-left py-3 px-4 font-semibold text-sm">Motivo</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr class="border-b hover:bg-gray-50">
+                <td class="py-3 px-4 text-sm">{{ log.timestamp.strftime('%d-%m-%Y %H:%M:%S') }}</td>
+                <td class="py-3 px-4 text-sm">{{ log.nombre_completo }}</td>
+                <td class="py-3 px-4 text-sm">{{ log.categoria_buscada }}</td>
+                <td class="py-3 px-4 text-sm">{{ log.termino_busqueda }}</td>
+                <td class="py-3 px-4 text-sm">{{ log.motivo }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" class="text-center py-4 text-gray-500">No hay registros de búsqueda todavía.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -1,10 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Editar Usuario{% endblock %}
+{% block title %}Crear Nuevo Usuario{% endblock %}
 {% block content %}
 <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-4xl mx-auto my-12">
     <div class="border-b pb-4 mb-6">
-        <h2 class="text-2xl font-bold text-gray-800">Editando Usuario</h2>
-        <p class="text-gray-600">Modificando el perfil de: <span class="font-semibold">{{ usuario.nombre_completo }}</span></p>
+        <h2 class="text-2xl font-bold text-gray-800">Crear Nuevo Usuario</h2>
     </div>
 
     <form method="post" class="space-y-8">
@@ -12,23 +11,19 @@
             
             <div class="space-y-6">
                 <fieldset>
-                    <legend class="text-lg font-medium text-gray-900 mb-4">Datos Personales</legend>
+                    <legend class="text-lg font-medium text-gray-900 mb-4">Datos de Acceso</legend>
                     <div>
                         <label for="nombre_completo" class="block text-sm font-medium text-gray-700">Nombre Completo</label>
-                        <input type="text" id="nombre_completo" name="nombre_completo" value="{{ usuario.nombre_completo }}" class="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg" required>
+                        <input type="text" id="nombre_completo" name="nombre_completo" class="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg" required>
                     </div>
                     <div class="mt-4">
                         <label for="email" class="block text-sm font-medium text-gray-700">Correo Electrónico</label>
-                        <input type="email" id="email" name="email" value="{{ usuario.email }}" class="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg" required>
+                        <input type="email" id="email" name="email" class="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg" required>
                     </div>
-                </fieldset>
-
-                <fieldset>
-                    <legend class="text-lg font-medium text-gray-900 mb-4">Estado de la Cuenta</legend>
-                    <select name="esta_activo" class="w-full px-4 py-2 border border-gray-300 rounded-lg">
-                        <option value="1" {% if usuario.esta_activo %}selected{% endif %}>Activo</option>
-                        <option value="0" {% if not usuario.esta_activo %}selected{% endif %}>Bloqueado</option>
-                    </select>
+                    <div class="mt-4">
+                        <label for="password" class="block text-sm font-medium text-gray-700">Contraseña</label>
+                        <input type="password" id="password" name="password" class="mt-1 w-full px-4 py-2 border border-gray-300 rounded-lg" required>
+                    </div>
                 </fieldset>
 
                 <fieldset>
@@ -36,9 +31,7 @@
                     <div class="space-y-2">
                         {% for rol in todos_los_roles %}
                             <div class="flex items-center">
-                                <input type="checkbox" name="roles" value="{{ rol.id }}" id="rol-{{ rol.id }}"
-                                       class="h-4 w-4 text-blue-600 border-gray-300 rounded"
-                                       {% if rol.nombre in roles_usuario %} checked {% endif %}>
+                                <input type="checkbox" name="roles" value="{{ rol.id }}" id="rol-{{ rol.id }}" class="h-4 w-4 text-blue-600 border-gray-300 rounded">
                                 <label for="rol-{{ rol.id }}" class="ml-3 block text-sm font-medium text-gray-700">{{ rol.nombre|title }}</label>
                             </div>
                         {% endfor %}
@@ -52,9 +45,7 @@
                     <div class="space-y-2">
                         {% for categoria in todas_las_categorias %}
                             <div class="flex items-center">
-                                <input type="checkbox" name="permisos" value="{{ categoria.id }}" id="cat-{{ categoria.id }}" 
-                                       class="h-4 w-4 text-blue-600 border-gray-300 rounded"
-                                       {% if categoria.id in permisos_usuario %} checked {% endif %}>
+                                <input type="checkbox" name="permisos" value="{{ categoria.id }}" id="cat-{{ categoria.id }}" class="h-4 w-4 text-blue-600 border-gray-300 rounded">
                                 <label for="cat-{{ categoria.id }}" class="ml-3 block text-sm font-medium text-gray-700">{{ categoria.nombre }}</label>
                             </div>
                         {% endfor %}
@@ -65,7 +56,7 @@
 
         <div class="flex justify-end gap-4 pt-6 border-t mt-8">
             <a href="{{ url_for('admin_panel') }}" class="btn btn-secondary">Cancelar</a>
-            <button type="submit" class="btn btn-primary">Guardar Cambios</button>
+            <button type="submit" class="btn btn-primary">Crear Usuario</button>
         </div>
     </form>
 </div>
