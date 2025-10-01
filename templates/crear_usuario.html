@@ -39,7 +39,7 @@
                 </fieldset>
             </div>
 
-            <div>
+            <div class="space-y-6">
                 <fieldset>
                     <legend class="text-lg font-medium text-gray-900 mb-4">Permisos de Búsqueda</legend>
                     <div class="space-y-2">
@@ -49,6 +49,14 @@
                                 <label for="cat-{{ categoria.id }}" class="ml-3 block text-sm font-medium text-gray-700">{{ categoria.nombre }}</label>
                             </div>
                         {% endfor %}
+                    </div>
+                </fieldset>
+
+                <fieldset>
+                    <legend class="text-lg font-medium text-gray-900">Opciones de Contraseña</legend>
+                    <div class="mt-4 flex items-center">
+                        <input type="checkbox" name="forzar_cambio_clave" value="1" id="forzar_cambio_clave" class="h-4 w-4 text-blue-600 border-gray-300 rounded">
+                        <label for="forzar_cambio_clave" class="ml-3 block text-sm font-medium text-gray-700">Forzar cambio de contraseña en el primer inicio de sesión</label>
                     </div>
                 </fieldset>
             </div>

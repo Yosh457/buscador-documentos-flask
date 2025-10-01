@@ -1,8 +1,13 @@
 # app.py
 
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import os
+import smtplib
 import pymysql
 import math
+import secrets
+from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, abort, send_from_directory
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -47,11 +52,13 @@ def admin_required(f):
 # Esta clase representa a nuestros usuarios. UserMixin le da las propiedades
 # que Flask-Login necesita (is_authenticated, is_active, etc.)
 class Usuario(UserMixin):
-    def __init__(self, id, nombre_completo, email, password_hash, permisos=[], roles=[]):
+    def __init__(self, id, nombre_completo, email, password_hash, esta_activo, debe_cambiar_clave, permisos=[], roles=[]):
         self.id = id
         self.nombre_completo = nombre_completo
         self.email = email
         self.password_hash = password_hash
+        self.esta_activo = esta_activo
+        self.debe_cambiar_clave = debe_cambiar_clave
         self.permisos = permisos # Para el buscador
         self.roles = roles       # Para el panel de admin
 
@@ -93,6 +100,8 @@ def load_user(user_id):
                 nombre_completo=user_data['nombre_completo'],
                 email=user_data['email'],
                 password_hash=user_data['password_hash'],
+                esta_activo=user_data['esta_activo'],
+                debe_cambiar_clave=user_data['debe_cambiar_clave'],
                 permisos=permisos_data,
                 roles=roles  # <-- Añadimos los roles al objeto
             )
@@ -141,6 +150,41 @@ def actualizar_indice():
     
     return archivos_indexados
 
+def enviar_correo_reseteo(usuario, token):
+    remitente = os.getenv("EMAIL_USUARIO")
+    contrasena = os.getenv("EMAIL_CONTRASENA")
+    
+    # Verificación para asegurarnos de que las credenciales se cargaron
+    if not remitente or not contrasena:
+        print("ERROR: Asegúrate de que EMAIL_USUARIO y EMAIL_CONTRASENA están en tu archivo .env")
+        return
+
+    msg = MIMEMultipart()
+    msg['Subject'] = 'Restablecimiento de Contraseña - Buscador de Documentos'
+    msg['From'] = f"Sistema Buscador <{remitente}>"
+    # ¡CORRECCIÓN! El destinatario es el email del usuario que lo solicitó.
+    msg['To'] = usuario['email']
+    
+    url_reseteo = url_for('resetear_clave', token=token, _external=True)
+    cuerpo = f"""
+    <p>Hola {usuario['nombre_completo']},</p>
+    <p>Hemos recibido una solicitud para restablecer tu contraseña. Haz clic en el siguiente enlace para continuar:</p>
+    <p><a href="{url_reseteo}" style="padding: 10px 15px; background-color: #0d6efd; color: white; text-decoration: none; border-radius: 5px;">Restablecer mi contraseña</a></p>
+    <p>Si no solicitaste esto, puedes ignorar este correo.</p>
+    <p>El enlace expirará en 1 hora.</p>
+    """
+    msg.attach(MIMEText(cuerpo, 'html'))
+    
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(remitente, contrasena)
+        server.send_message(msg)
+        server.quit()
+        print(f"Correo de reseteo enviado exitosamente a {usuario['email']}")
+    except Exception as e:
+        print(f"Error al enviar correo de reseteo: {e}")
+
 # --- RUTAS DE LA APLICACIÓN ---
 @app.route('/')
 def index():
@@ -158,20 +202,30 @@ def login():
         conn = pymysql.connect(**db_config)
         try:
             with conn.cursor() as cursor:
+                # La consulta ahora también trae el estado 'esta_activo'
                 cursor.execute("SELECT * FROM usuarios WHERE email = %s", (email,))
                 user_data = cursor.fetchone()
 
-                # --- ¡CAMBIO AQUÍ! ---
-                # 1. Cargamos al usuario candidato
-                if user_data:
+                # 1. Verificamos si el usuario existe y la contraseña es correcta
+                if user_data and bcrypt.check_password_hash(user_data['password_hash'], password):
+                    
+                    # --- ¡NUEVA VERIFICACIÓN DE ESTADO! ---
+                    # 2. Verificamos si la cuenta está activa
+                    if not user_data['esta_activo']:
+                        flash('Tu cuenta ha sido bloqueada. Por favor, contacta a un administrador.', 'danger')
+                        return redirect(url_for('login'))
+                    
+                    # 3. Si todo está bien, creamos el objeto y lo logueamos
                     usuario = load_user(user_data['id'])
-                    # 2. Usamos el nuevo método para chequear la contraseña
-                    if usuario and usuario.check_password(password):
-                        login_user(usuario)
+                    login_user(usuario)
+                    
+                    # --- ¡LÓGICA DE REDIRECCIÓN FINAL! ---
+                    if usuario.debe_cambiar_clave:
+                        return redirect(url_for('cambiar_clave'))
+                    else:
                         return redirect(url_for('menu'))
-
-                # Si algo falla (usuario no existe o contraseña incorrecta)
-                flash('Email o contraseña incorrectos.', 'danger')
+                else:
+                    flash('Email o contraseña incorrectos.', 'danger')
         finally:
             conn.close()
     return render_template('login.html')
@@ -400,7 +454,8 @@ def crear_usuario():
             password = request.form.get('password')
             roles_ids = request.form.getlist('roles')
             permisos_ids = request.form.getlist('permisos')
-
+            forzar_cambio = request.form.get('forzar_cambio_clave') == '1'
+            
             with conn.cursor() as cursor:
                 # 1. Verificamos que el email no esté en uso
                 cursor.execute("SELECT email FROM usuarios WHERE email = %s", (email,))
@@ -411,9 +466,9 @@ def crear_usuario():
 
                 # 2. Encriptamos la contraseña y creamos el usuario
                 hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
-                cursor.execute("INSERT INTO usuarios (nombre_completo, email, password_hash) VALUES (%s, %s, %s)",
-                               (nombre, email, hashed_password))
-                
+                cursor.execute("INSERT INTO usuarios (nombre_completo, email, password_hash, debe_cambiar_clave) VALUES (%s, %s, %s, %s)",
+                               (nombre, email, hashed_password, forzar_cambio))
+
                 # 3. Obtenemos el ID del usuario recién creado
                 new_user_id = cursor.lastrowid
 
@@ -534,6 +589,98 @@ def ver_logs():
                            todos_los_usuarios=todos_los_usuarios,
                            todas_las_categorias=todas_las_categorias,
                            filtros=filtros_activos)
+
+@app.route('/cambiar-clave', methods=['GET', 'POST'])
+@login_required
+def cambiar_clave():
+    if request.method == 'POST':
+        nueva_pass = request.form.get('nueva_password')
+        confirmar_pass = request.form.get('confirmar_password')
+
+        if nueva_pass != confirmar_pass:
+            flash('Las contraseñas no coinciden.', 'danger')
+            return redirect(url_for('cambiar_clave'))
+
+        # Encriptamos y actualizamos la contraseña
+        hashed_password = bcrypt.generate_password_hash(nueva_pass).decode('utf-8')
+        conn = pymysql.connect(**db_config)
+        try:
+            with conn.cursor() as cursor:
+                # Actualizamos la contraseña y desactivamos la bandera de cambio
+                sql = "UPDATE usuarios SET password_hash = %s, debe_cambiar_clave = 0 WHERE id = %s"
+                cursor.execute(sql, (hashed_password, current_user.id))
+            conn.commit()
+        finally:
+            conn.close()
+
+        flash('Contraseña actualizada exitosamente. Por favor, inicia sesión de nuevo.', 'success')
+        logout_user() # Cerramos la sesión para forzar un nuevo login con la nueva clave
+        return redirect(url_for('login'))
+
+    return render_template('cambiar_clave.html')
+
+@app.route('/solicitar-reseteo', methods=['GET', 'POST'])
+def solicitar_reseteo():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        conn = pymysql.connect(**db_config)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT * FROM usuarios WHERE email = %s", (email,))
+                usuario = cursor.fetchone()
+                if usuario:
+                    # Generar token seguro y fecha de expiración
+                    token = secrets.token_hex(16)
+                    expiracion = datetime.utcnow() + timedelta(hours=1)
+
+                    # Guardar token en la BD
+                    sql_update = "UPDATE usuarios SET reset_token = %s, reset_token_expiracion = %s WHERE id = %s"
+                    cursor.execute(sql_update, (token, expiracion, usuario['id']))
+                    conn.commit()
+
+                    # Enviar correo
+                    enviar_correo_reseteo(usuario, token)
+
+            flash('Si tu correo está en nuestro sistema, recibirás un enlace para restablecer tu contraseña.', 'info')
+            return redirect(url_for('login'))
+        finally:
+            conn.close()
+    return render_template('solicitar_reseteo.html')
+
+@app.route('/resetear-clave/<token>', methods=['GET', 'POST'])
+def resetear_clave(token):
+    conn = pymysql.connect(**db_config)
+    try:
+        with conn.cursor() as cursor:
+            # Buscar usuario por token y verificar que no haya expirado
+            sql_find = "SELECT * FROM usuarios WHERE reset_token = %s AND reset_token_expiracion > %s"
+            cursor.execute(sql_find, (token, datetime.utcnow()))
+            usuario = cursor.fetchone()
+
+            if not usuario:
+                flash('El enlace de restablecimiento es inválido o ha expirado.', 'danger')
+                return redirect(url_for('solicitar_reseteo'))
+
+            if request.method == 'POST':
+                nueva_pass = request.form.get('nueva_password')
+                confirmar_pass = request.form.get('confirmar_password')
+
+                if nueva_pass != confirmar_pass:
+                    flash('Las contraseñas no coinciden.', 'danger')
+                    return redirect(url_for('resetear_clave', token=token))
+
+                hashed_password = bcrypt.generate_password_hash(nueva_pass).decode('utf-8')
+                # Actualizar contraseña y anular token
+                sql_update = "UPDATE usuarios SET password_hash = %s, reset_token = NULL, reset_token_expiracion = NULL WHERE id = %s"
+                cursor.execute(sql_update, (hashed_password, usuario['id']))
+                conn.commit()
+
+                flash('Tu contraseña ha sido actualizada. Ya puedes iniciar sesión.', 'success')
+                return redirect(url_for('login'))
+    finally:
+        conn.close()
+
+    return render_template('resetear_clave.html')
 
 if __name__ == '__main__':
     app.run(debug=True)
