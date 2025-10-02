@@ -29,6 +29,13 @@
     <div class="w-full">
         {% block content %}{% endblock %}
     </div>
-
+    <div id="inactivity-modal" class="fixed inset-0 z-50 items-center justify-center hidden flex" style="background-color: rgba(0, 0, 0, 0.6);">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 m-4 text-center">
+            <h3 class="text-lg font-bold text-yellow-600 mb-2">Tu sesión está a punto de expirar</h3>
+            <p class="text-sm text-gray-600 mb-6">Por inactividad, tu sesión se cerrará automáticamente en breve. ¿Deseas permanecer conectado?</p>
+            <button id="stay-connected-btn" class="btn btn-primary">Permanecer Conectado</button>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='inactivity.js') }}"></script>
 </body>
 </html>

@@ -10,7 +10,7 @@ import secrets
 import re
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, flash, abort, send_from_directory
+from flask import Flask, render_template, request, redirect, session, url_for, flash, abort, send_from_directory
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_bcrypt import Bcrypt
 from dotenv import load_dotenv
@@ -48,6 +48,24 @@ def admin_required(f):
             abort(403)
         return f(*args, **kwargs)
     return decorated_function
+
+# --- CONFIGURACIÓN DE LA DURACIÓN DE LA SESIÓN ---
+# Establecemos que las sesiones duren 5 minutos.
+app.permanent_session_lifetime = timedelta(minutes=5)
+
+@app.before_request
+def make_session_permanent():
+    # Le decimos a Flask que use la duración que configuramos.
+    session.permanent = True
+
+# --- CONTROL DE CACHÉ PARA EVITAR EL "BOTÓN ATRÁS" ---
+@app.after_request
+def add_header(response):
+    # Estas cabeceras le ordenan al navegador no guardar la página en caché.
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '-1'
+    return response
 
 # --- MODELO DE USUARIO ---
 # Esta clase representa a nuestros usuarios. UserMixin le da las propiedades
