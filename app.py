@@ -7,6 +7,7 @@ import smtplib
 import pymysql
 import math
 import secrets
+import re
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, abort, send_from_directory
@@ -150,6 +151,7 @@ def actualizar_indice():
     
     return archivos_indexados
 
+# --- ¡NUEVA FUNCIÓN PARA ENVIAR CORREOS DE RESETEO! ---
 def enviar_correo_reseteo(usuario, token):
     remitente = os.getenv("EMAIL_USUARIO")
     contrasena = os.getenv("EMAIL_CONTRASENA")
@@ -184,6 +186,17 @@ def enviar_correo_reseteo(usuario, token):
         print(f"Correo de reseteo enviado exitosamente a {usuario['email']}")
     except Exception as e:
         print(f"Error al enviar correo de reseteo: {e}")
+
+# --- NUEVA FUNCIÓN PARA VALIDAR CONTRASEÑAS ---
+def es_contrasena_segura(password):
+    """Verifica que la contraseña cumpla con los requisitos de seguridad."""
+    if len(password) < 8:
+        return False
+    if not re.search(r"[A-Z]", password): # Al menos una mayúscula
+        return False
+    if not re.search(r"[0-9]", password): # Al menos un número
+        return False
+    return True
 
 # --- RUTAS DE LA APLICACIÓN ---
 @app.route('/')
@@ -601,6 +614,11 @@ def cambiar_clave():
             flash('Las contraseñas no coinciden.', 'danger')
             return redirect(url_for('cambiar_clave'))
 
+        # --- ¡NUEVA VALIDACIÓN DE SEGURIDAD EN EL BACKEND! ---
+        if not es_contrasena_segura(nueva_pass):
+            flash('La contraseña no cumple los requisitos: mínimo 8 caracteres, una mayúscula y un número.', 'danger')
+            return redirect(url_for('cambiar_clave'))
+        
         # Encriptamos y actualizamos la contraseña
         hashed_password = bcrypt.generate_password_hash(nueva_pass).decode('utf-8')
         conn = pymysql.connect(**db_config)
@@ -669,6 +687,12 @@ def resetear_clave(token):
                     flash('Las contraseñas no coinciden.', 'danger')
                     return redirect(url_for('resetear_clave', token=token))
 
+                # --- ¡NUEVA VALIDACIÓN DE SEGURIDAD EN EL BACKEND! ---
+                if not es_contrasena_segura(nueva_pass):
+                    flash('La contraseña no cumple los requisitos: mínimo 8 caracteres, una mayúscula y un número.', 'danger')
+                    return redirect(url_for('resetear_clave', token=token))
+
+                # Encriptamos y actualizamos la contraseña
                 hashed_password = bcrypt.generate_password_hash(nueva_pass).decode('utf-8')
                 # Actualizar contraseña y anular token
                 sql_update = "UPDATE usuarios SET password_hash = %s, reset_token = NULL, reset_token_expiracion = NULL WHERE id = %s"
