@@ -45,3 +45,13 @@ body {
     background-color: #ffca2c;
     border-color: #ffc720;
 }
+
+.btn-danger {
+    color: #fff;
+    background-color: #dc3545;
+    border-color: #dc3545;
+}
+.btn-danger:hover {
+    background-color: #bb2d3b;
+    border-color: #b02a37;
+}
