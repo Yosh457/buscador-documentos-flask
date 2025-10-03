@@ -16,6 +16,30 @@
         </div>
     </div>
 
+    <form method="get" action="{{ url_for('admin_panel') }}" class="bg-gray-50 p-4 rounded-lg mb-6 flex items-center gap-4">
+        <div class="flex-1">
+            <label for="filtro_rol" class="block text-sm font-medium text-gray-700">Filtrar por Rol:</label>
+            <select name="rol_id" id="filtro_rol" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm">
+                <option value="">Todos los roles</option>
+                {% for rol in todos_los_roles %}
+                    <option value="{{ rol.id }}" {% if rol.id == filtros.rol_id|int %}selected{% endif %}>{{ rol.nombre|title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="flex-1">
+            <label for="filtro_estado" class="block text-sm font-medium text-gray-700">Filtrar por Estado:</label>
+            <select name="estado" id="filtro_estado" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm">
+                <option value="">Ambos</option>
+                <option value="1" {% if filtros.estado == '1' %}selected{% endif %}>Activo</option>
+                <option value="0" {% if filtros.estado == '0' %}selected{% endif %}>Bloqueado</option>
+            </select>
+        </div>
+        <div class="flex items-end h-full">
+            <button type="submit" class="btn btn-primary">Filtrar</button>
+            <a href="{{ url_for('admin_panel') }}" class="btn btn-secondary ml-2">Limpiar</a>
+        </div>
+    </form>
+
     <table class="min-w-full bg-white">
         <thead class="bg-gray-100">
             <tr>
@@ -28,7 +52,7 @@
         </thead>
         <tbody>
             {% for usuario in usuarios %}
-            <tr class="border-b">
+            <tr class="border-b hover:bg-gray-50">
                 <td class="py-3 px-4">{{ usuario.nombre_completo }}</td>
                 <td class="py-3 px-4">{{ usuario.email }}</td>
                 <td class="py-3 px-4">{{ usuario.roles or 'Sin roles' }}</td>
@@ -43,8 +67,36 @@
                     <a href="{{ url_for('editar_usuario', user_id=usuario.id) }}" class="btn btn-primary">Editar</a>
                 </td>
             </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" class="text-center py-4 text-gray-500">No se encontraron usuarios que coincidan con los filtros.</td>
+            </tr>
             {% endfor %}
         </tbody>
     </table>
+
+    <nav class="mt-6 flex items-center justify-between border-t border-gray-200 px-4 sm:px-0">
+        <div class="flex w-0 flex-1">
+            {% if pagina_actual > 1 %}
+                <a href="{{ url_for('admin_panel', page=pagina_actual-1, **filtros) }}" class="inline-flex items-center border-t-2 border-transparent pr-1 pt-4 text-sm font-medium text-gray-500 hover:border-gray-300 hover:text-gray-700">
+                    &larr; Anterior
+                </a>
+            {% endif %}
+        </div>
+        <div class="hidden md:flex">
+            {% for page_num in range(1, total_paginas + 1) %}
+                <a href="{{ url_for('admin_panel', page=page_num, **filtros) }}" class="inline-flex items-center border-t-2 px-4 pt-4 text-sm font-medium {% if page_num == pagina_actual %} border-indigo-500 text-indigo-600 {% else %} border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 {% endif %}">
+                    {{ page_num }}
+                </a>
+            {% endfor %}
+        </div>
+        <div class="flex w-0 flex-1 justify-end">
+             {% if pagina_actual < total_paginas %}
+                <a href="{{ url_for('admin_panel', page=pagina_actual+1, **filtros) }}" class="inline-flex items-center border-t-2 border-transparent pl-1 pt-4 text-sm font-medium text-gray-500 hover:border-gray-300 hover:text-gray-700">
+                    Siguiente &rarr;
+                </a>
+            {% endif %}
+        </div>
+    </nav>
 </div>
 {% endblock %}

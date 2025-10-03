@@ -372,24 +372,73 @@ def buscador():
 # --- ¡NUEVA RUTA PARA EL PANEL DE ADMINISTRACIÓN! ---
 @app.route('/admin')
 @login_required
-@admin_required # Usamos nuestro nuevo guardián
+@admin_required
 def admin_panel():
+    # --- Configuración de Paginación ---
+    USERS_POR_PAGINA = 10
+    pagina_actual = request.args.get('page', 1, type=int)
+    offset = (pagina_actual - 1) * USERS_POR_PAGINA
+
+    # --- Lógica de Filtros ---
+    filtro_rol_id = request.args.get('rol_id', '')
+    filtro_estado = request.args.get('estado', '')
+    
+    clausulas_where = []
+    parametros = []
+    
+    base_sql = """
+        FROM usuarios u
+        LEFT JOIN usuario_roles ur ON u.id = ur.usuario_id
+        LEFT JOIN roles r ON ur.role_id = r.id
+    """
+    
+    if filtro_rol_id:
+        clausulas_where.append("ur.role_id = %s")
+        parametros.append(filtro_rol_id)
+    if filtro_estado in ['0', '1']:
+        clausulas_where.append("u.esta_activo = %s")
+        parametros.append(filtro_estado)
+        
+    where_sql = "WHERE " + " AND ".join(clausulas_where) if clausulas_where else ""
+
     conn = pymysql.connect(**db_config)
     try:
         with conn.cursor() as cursor:
-            # Obtenemos todos los usuarios y sus roles
-            cursor.execute("""
+            # 1. Obtenemos el TOTAL de usuarios que coinciden con los filtros
+            sql_count = f"SELECT COUNT(DISTINCT u.id) as total {base_sql} {where_sql}"
+            cursor.execute(sql_count, tuple(parametros))
+            total_usuarios = cursor.fetchone()['total']
+            total_paginas = math.ceil(total_usuarios / USERS_POR_PAGINA)
+
+            # 2. Obtenemos la PORCIÓN de usuarios para la página actual
+            sql_select = f"""
                 SELECT u.id, u.nombre_completo, u.email, u.esta_activo, GROUP_CONCAT(r.nombre SEPARATOR ', ') as roles
-                FROM usuarios u
-                LEFT JOIN usuario_roles ur ON u.id = ur.usuario_id
-                LEFT JOIN roles r ON ur.role_id = r.id
+                {base_sql}
+                {where_sql}
                 GROUP BY u.id
-            """)
+                ORDER BY u.nombre_completo
+                LIMIT %s OFFSET %s
+            """
+            cursor.execute(sql_select, tuple(parametros) + (USERS_POR_PAGINA, offset))
             usuarios = cursor.fetchall()
+            
+            # 3. Obtenemos todos los roles para llenar el dropdown del filtro
+            cursor.execute("SELECT id, nombre FROM roles ORDER BY nombre")
+            todos_los_roles = cursor.fetchall()
     finally:
         conn.close()
+    
+    filtros_activos = {
+        'rol_id': filtro_rol_id,
+        'estado': filtro_estado
+    }
 
-    return render_template('admin_panel.html', usuarios=usuarios)
+    return render_template('admin_panel.html', 
+                           usuarios=usuarios,
+                           pagina_actual=pagina_actual,
+                           total_paginas=total_paginas,
+                           todos_los_roles=todos_los_roles,
+                           filtros=filtros_activos)
 
 @app.route('/admin/indexar')
 @login_required
