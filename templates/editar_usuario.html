@@ -7,7 +7,7 @@
         <p class="text-gray-600">Modificando el perfil de: <span class="font-semibold">{{ usuario.nombre_completo }}</span></p>
     </div>
 
-    <form method="post" class="space-y-8">
+    <form id="edit-form" method="post" class="space-y-8">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
             
             <div class="space-y-6">
@@ -65,8 +65,45 @@
 
         <div class="flex justify-end gap-4 pt-6 border-t mt-8">
             <a href="{{ url_for('admin_panel') }}" class="btn btn-secondary">Cancelar</a>
-            <button type="submit" class="btn btn-primary">Guardar Cambios</button>
+            <button type="button" id="save-changes-btn" class="btn btn-primary">Guardar Cambios</button>
         </div>
     </form>
 </div>
+
+<div id="confirmation-modal" class="fixed inset-0 z-50 items-center justify-center hidden flex" style="background-color: rgba(0, 0, 0, 0.6);">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 m-4 text-center">
+        <h3 class="text-lg font-bold text-gray-900 mb-2">Confirmar Cambios</h3>
+        <p class="text-sm text-gray-600 mb-6">¿Estás seguro de que deseas guardar los cambios realizados en este usuario?</p>
+        <div class="flex justify-center gap-4">
+            <button id="cancel-modal-btn" class="btn btn-secondary">Cancelar</button>
+            <button id="confirm-modal-btn" class="btn btn-primary">Sí, Guardar</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.getElementById('edit-form');
+        const saveChangesBtn = document.getElementById('save-changes-btn');
+        const modal = document.getElementById('confirmation-modal');
+        const cancelModalBtn = document.getElementById('cancel-modal-btn');
+        const confirmModalBtn = document.getElementById('confirm-modal-btn');
+
+        // Cuando se hace clic en 'Guardar Cambios', mostramos el modal
+        saveChangesBtn.addEventListener('click', function() {
+            modal.classList.remove('hidden');
+        });
+
+        // Si se hace clic en 'Cancelar' en el modal, lo ocultamos
+        cancelModalBtn.addEventListener('click', function() {
+            modal.classList.add('hidden');
+        });
+
+        // Si se hace clic en 'Sí, Guardar', AHORA SÍ enviamos el formulario
+        confirmModalBtn.addEventListener('click', function() {
+            form.submit();
+        });
+    });
+</script>
+
 {% endblock %}
