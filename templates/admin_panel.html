@@ -16,27 +16,33 @@
         </div>
     </div>
 
-    <form method="get" action="{{ url_for('admin_panel') }}" class="bg-gray-50 p-4 rounded-lg mb-6 flex items-center gap-4">
-        <div class="flex-1">
-            <label for="filtro_rol" class="block text-sm font-medium text-gray-700">Filtrar por Rol:</label>
-            <select name="rol_id" id="filtro_rol" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm">
-                <option value="">Todos los roles</option>
-                {% for rol in todos_los_roles %}
-                    <option value="{{ rol.id }}" {% if rol.id == filtros.rol_id|int %}selected{% endif %}>{{ rol.nombre|title }}</option>
-                {% endfor %}
-            </select>
+    <form method="get" action="{{ url_for('admin_panel') }}" class="bg-gray-50 p-4 rounded-lg mb-6 space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <label for="busqueda_usuario" class="block text-sm font-medium text-gray-700">Buscar por Nombre o Email:</label>
+                <input type="text" name="busqueda" id="busqueda_usuario" value="{{ filtros.busqueda or '' }}" class="mt-1 block w-full py-2 px-3 border border-gray-300 rounded-md shadow-sm">
+            </div>
+            <div>
+                <label for="filtro_rol" class="block text-sm font-medium text-gray-700">Filtrar por Rol:</label>
+                <select name="rol_id" id="filtro_rol" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm">
+                    <option value="">Todos los roles</option>
+                    {% for rol in todos_los_roles %}
+                        <option value="{{ rol.id }}" {% if rol.id == filtros.rol_id|int %}selected{% endif %}>{{ rol.nombre|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="filtro_estado" class="block text-sm font-medium text-gray-700">Filtrar por Estado:</label>
+                <select name="estado" id="filtro_estado" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm">
+                    <option value="">Ambos</option>
+                    <option value="1" {% if filtros.estado == '1' %}selected{% endif %}>Activo</option>
+                    <option value="0" {% if filtros.estado == '0' %}selected{% endif %}>Bloqueado</option>
+                </select>
+            </div>
         </div>
-        <div class="flex-1">
-            <label for="filtro_estado" class="block text-sm font-medium text-gray-700">Filtrar por Estado:</label>
-            <select name="estado" id="filtro_estado" class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm">
-                <option value="">Ambos</option>
-                <option value="1" {% if filtros.estado == '1' %}selected{% endif %}>Activo</option>
-                <option value="0" {% if filtros.estado == '0' %}selected{% endif %}>Bloqueado</option>
-            </select>
-        </div>
-        <div class="flex items-end h-full">
-            <button type="submit" class="btn btn-primary">Filtrar</button>
-            <a href="{{ url_for('admin_panel') }}" class="btn btn-secondary ml-2">Limpiar</a>
+        <div class="flex justify-end gap-2 pt-2">
+            <a href="{{ url_for('admin_panel') }}" class="btn btn-secondary">Limpiar</a>
+            <button type="submit" class="btn btn-primary">Buscar y Filtrar</button>
         </div>
     </form>
 

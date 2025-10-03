@@ -379,9 +379,10 @@ def admin_panel():
     pagina_actual = request.args.get('page', 1, type=int)
     offset = (pagina_actual - 1) * USERS_POR_PAGINA
 
-    # --- Lógica de Filtros ---
+    # --- Lógica de Filtros y Búsqueda ---
     filtro_rol_id = request.args.get('rol_id', '')
     filtro_estado = request.args.get('estado', '')
+    filtro_busqueda = request.args.get('busqueda', '')
     
     clausulas_where = []
     parametros = []
@@ -398,6 +399,11 @@ def admin_panel():
     if filtro_estado in ['0', '1']:
         clausulas_where.append("u.esta_activo = %s")
         parametros.append(filtro_estado)
+    # --- ¡NUEVA LÓGICA DE BÚSQUEDA! ---
+    if filtro_busqueda:
+        # Buscamos en el nombre O en el email
+        clausulas_where.append("(u.nombre_completo LIKE %s OR u.email LIKE %s)")
+        parametros.extend([f"%{filtro_busqueda}%", f"%{filtro_busqueda}%"])
         
     where_sql = "WHERE " + " AND ".join(clausulas_where) if clausulas_where else ""
 
@@ -430,7 +436,8 @@ def admin_panel():
     
     filtros_activos = {
         'rol_id': filtro_rol_id,
-        'estado': filtro_estado
+        'estado': filtro_estado,
+        'busqueda': filtro_busqueda
     }
 
     return render_template('admin_panel.html', 
