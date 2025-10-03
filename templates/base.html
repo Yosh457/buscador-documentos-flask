@@ -36,6 +36,8 @@
             <button id="stay-connected-btn" class="btn btn-primary">Permanecer Conectado</button>
         </div>
     </div>
+    {% if current_user.is_authenticated %}
     <script src="{{ url_for('static', filename='inactivity.js') }}"></script>
+    {% endif %}
 </body>
 </html>
