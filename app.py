@@ -780,5 +780,18 @@ def resetear_clave(token):
 
     return render_template('resetear_clave.html')
 
+# --- INDEXACIÓN AUTOMÁTICA AL INICIAR LA APLICACIÓN ---
+# Esta condición es un truco para asegurar que la indexación se ejecute
+# solo una vez cuando inicias el servidor, y no cada vez que el modo
+# de depuración recarga el archivo.
+if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+    print("Iniciando indexación de archivos al arrancar...")
+    try:
+        # Llamamos a la función de indexación
+        total = actualizar_indice()
+        print(f"Indexación inicial completada. Se encontraron {total} archivos.")
+    except Exception as e:
+        print(f"ERROR durante la indexación inicial: {e}")
+        
 if __name__ == '__main__':
     app.run(debug=True)
