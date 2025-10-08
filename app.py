@@ -8,6 +8,7 @@ import pymysql
 import math
 import secrets
 import re
+import sys
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, request, redirect, session, url_for, flash, abort, send_from_directory
@@ -15,9 +16,23 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from flask_bcrypt import Bcrypt
 from dotenv import load_dotenv
 
+# --- FUNCIÓN PARA RESOLVER RUTAS EN EL EJECUTABLE ---
+def resource_path(relative_path):
+    """ Obtiene la ruta absoluta al recurso, funciona para desarrollo y para PyInstaller """
+    try:
+        # PyInstaller crea una carpeta temporal y guarda la ruta en _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 # --- CONFIGURACIÓN INICIAL ---
 load_dotenv()
-app = Flask(__name__)
+# ¡LÍNEA MODIFICADA! Le decimos a Flask dónde buscar las carpetas
+app = Flask(__name__,
+            static_folder=resource_path('static'),
+            template_folder=resource_path('templates'))
+
 # Cargamos la SECRET_KEY desde el archivo .env
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 # Inicializamos Bcrypt para encriptar contraseñas

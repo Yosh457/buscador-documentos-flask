@@ -2,3 +2,7 @@ venv/
 __pycache__/
 *.pyc
 .env
+build/
+dist/
+BuscadorDocumentos.spec
+run.py
