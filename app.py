@@ -9,9 +9,15 @@ import math
 import secrets
 import re
 import sys
+import numpy as np
+import pydicom
+from pydicom.pixel_data_handlers.util import apply_voi_lut
+from PIL import Image
+import io
+from pathlib import Path
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import Flask, render_template, request, redirect, session, url_for, flash, abort, send_from_directory
+from flask import Flask, render_template, request, redirect, session, url_for, flash, abort, send_from_directory, send_file, render_template_string
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_bcrypt import Bcrypt
 from dotenv import load_dotenv
@@ -603,24 +609,147 @@ def crear_usuario():
 
 # --- ¡RUTA PARA SERVIR ARCHIVOS ACTUALIZADA! ---
 # Ahora es más flexible para manejar rutas de red complejas
+
 @app.route('/documentos')
 @login_required
 def servir_documento():
-    # Obtenemos la ruta completa del archivo desde los parámetros de la URL
     ruta_archivo = request.args.get('ruta', '')
     if not ruta_archivo:
         abort(404)
 
-    # Verificación de seguridad: Asegurarnos de que el usuario tiene permiso para la carpeta base de este archivo
+    # Verificación de seguridad (misma lógica)
     carpetas_permitidas = [p['ruta_carpeta'] for p in current_user.permisos]
     tiene_permiso = any(ruta_archivo.startswith(base) for base in carpetas_permitidas)
-
     if not tiene_permiso or not os.path.exists(ruta_archivo):
-        abort(403) # Acceso prohibido si no tiene permiso o el archivo no existe
+        abort(403)
 
-    # Extraemos el directorio y el nombre del archivo
     directorio, nombre_archivo = os.path.split(ruta_archivo)
-    return send_from_directory(directorio, nombre_archivo)
+
+    # --- DETECCIÓN DICOM ---
+    if nombre_archivo.lower().endswith(('.dcm', '.dicom')):
+        try:
+            dcm_file = pydicom.dcmread(ruta_archivo)
+
+            # --- CASO 1: Multi-frame DICOM ---
+            num_frames = int(dcm_file.get("NumberOfFrames", 1))
+
+            if num_frames > 1:
+                print(f"📸 Multi-frame detectado ({num_frames} imágenes en 1 archivo)")
+                frames = dcm_file.pixel_array
+                imagenes = []
+
+                for i in range(num_frames):
+                    frame = frames[i].astype(float)
+                    if frame.max() > 0:
+                        frame = (np.maximum(frame, 0) / frame.max()) * 255.0
+                    frame = frame.astype(np.uint8)
+                    img = Image.fromarray(frame)
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    buffer = io.BytesIO()
+                    img.save(buffer, 'PNG', quality=95)
+                    buffer.seek(0)
+                    imagenes.append(buffer.getvalue())
+
+            else:
+                # --- CASO 2: Serie de archivos DICOM ---
+                print("📂 Buscando serie DICOM en la carpeta...")
+                ds = dcm_file
+                series_uid = ds.get("SeriesInstanceUID")
+                carpeta = Path(directorio)
+                archivos_serie = sorted(
+                    [f for f in carpeta.glob("*.dcm") if pydicom.dcmread(f, stop_before_pixels=True).get("SeriesInstanceUID") == series_uid],
+                    key=lambda f: pydicom.dcmread(f, stop_before_pixels=True).get("InstanceNumber", 0)
+                )
+
+                if len(archivos_serie) > 1:
+                    print(f"📚 Serie detectada: {len(archivos_serie)} archivos")
+
+                    imagenes = []
+                    for f in archivos_serie:
+                        ds = pydicom.dcmread(f)
+                        pixels = ds.pixel_array.astype(float)
+                        if pixels.max() > 0:
+                            pixels = (np.maximum(pixels, 0) / pixels.max()) * 255.0
+                        pixels = pixels.astype(np.uint8)
+                        img = Image.fromarray(pixels)
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
+                        buffer = io.BytesIO()
+                        img.save(buffer, 'PNG', quality=95)
+                        buffer.seek(0)
+                        imagenes.append(buffer.getvalue())
+
+                else:
+                    # --- Solo una imagen ---
+                    pixels = dcm_file.pixel_array.astype(float)
+                    if pixels.max() > 0:
+                        pixels = (np.maximum(pixels, 0) / pixels.max()) * 255.0
+                    pixels = pixels.astype(np.uint8)
+                    image = Image.fromarray(pixels)
+                    if image.mode != 'RGB':
+                        image = image.convert('RGB')
+                    buffer = io.BytesIO()
+                    image.save(buffer, 'PNG', quality=95)
+                    buffer.seek(0)
+                    imagenes = [buffer.getvalue()]
+
+            # --- Generar HTML con slider ---
+            html_slider = """
+            <!DOCTYPE html>
+            <html lang="es">
+            <head>
+                <meta charset="UTF-8">
+                <title>Visor DICOM</title>
+                <style>
+                    body { background: #000; color: white; text-align: center; font-family: sans-serif; margin: 0; }
+                    img { max-width: 90vw; max-height: 90vh; display: block; margin: auto; border-radius: 10px; }
+                    button { background: #333; color: white; border: none; padding: 10px 20px; margin: 10px; border-radius: 8px; cursor: pointer; }
+                    button:hover { background: #555; }
+                    .controls { position: fixed; bottom: 20px; width: 100%; display: flex; justify-content: center; gap: 10px; }
+                </style>
+            </head>
+            <body>
+                <img id="dicomImage" src="data:image/png;base64,{{ imagenes[0] }}" alt="DICOM">
+                <div class="controls">
+                    <button onclick="prev()">⬅ Anterior</button>
+                    <span id="contador">1 / {{ imagenes|length }}</span>
+                    <button onclick="next()">Siguiente ➡</button>
+                </div>
+                <script>
+                    const imagenes = {{ imagenes|tojson }};
+                    let index = 0;
+                    const imgTag = document.getElementById("dicomImage");
+                    const contador = document.getElementById("contador");
+                    function update() {
+                        imgTag.src = "data:image/png;base64," + imagenes[index];
+                        contador.textContent = (index+1) + " / " + imagenes.length;
+                    }
+                    function next() {
+                        if (index < imagenes.length - 1) { index++; update(); }
+                    }
+                    function prev() {
+                        if (index > 0) { index--; update(); }
+                    }
+                    document.addEventListener("wheel", e => {
+                        if (e.deltaY > 0) next();
+                        else prev();
+                    });
+                </script>
+            </body>
+            </html>
+            """
+
+            import base64
+            imagenes_base64 = [base64.b64encode(img).decode('utf-8') for img in imagenes]
+            return render_template_string(html_slider, imagenes=imagenes_base64)
+
+        except Exception as e:
+            print(f"❌ Error al procesar el archivo DICOM '{ruta_archivo}': {e}")
+            abort(500)
+
+    # --- No es DICOM ---
+    return send_file(ruta_archivo, as_attachment=False)
 
 # --- ¡NUEVA RUTA PARA VISUALIZAR LOS LOGS (CON FILTROS Y PAGINACIÓN)! ---
 @app.route('/admin/logs')

@@ -6,3 +6,4 @@ build/
 dist/
 BuscadorDocumentos.spec
 run.py
+test_dicom.py
