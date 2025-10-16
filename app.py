@@ -14,10 +14,11 @@ import pydicom
 from pydicom.pixel_data_handlers.util import apply_voi_lut
 from PIL import Image
 import io
+import base64
 from pathlib import Path
 from datetime import datetime, timedelta
 from functools import wraps
-from flask import Flask, render_template, request, redirect, session, url_for, flash, abort, send_from_directory, send_file, render_template_string
+from flask import Flask, render_template, request, redirect, session, url_for, flash, abort, send_from_directory, send_file, render_template_string, jsonify
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_bcrypt import Bcrypt
 from dotenv import load_dotenv
@@ -38,6 +39,50 @@ load_dotenv()
 app = Flask(__name__,
             static_folder=resource_path('static'),
             template_folder=resource_path('templates'))
+
+# Carpeta donde guardas los DICOM (ajústala a tu ruta)
+DICOM_FOLDER = "dicoms"
+
+# Cache temporal en memoria para no reabrir el mismo archivo a cada request
+cache_series = {}
+
+def load_dicom_series(doc_id):
+    """
+    Carga un archivo DICOM (o serie si fuese el caso).
+    Devuelve un diccionario con 'frames' (lista de numpy arrays) y metadata.
+    """
+    if doc_id in cache_series:
+        return cache_series[doc_id]
+
+    path = os.path.join(DICOM_FOLDER, doc_id)
+    if not os.path.exists(path):
+        abort(404, f"No existe el archivo {path}")
+
+    ds = pydicom.dcmread(path)
+
+    frames = []
+    if hasattr(ds, "NumberOfFrames") and int(ds.NumberOfFrames) > 1:
+        # Multi-frame en un solo archivo
+        arr = ds.pixel_array
+        for i in range(arr.shape[0]):
+            frames.append(arr[i])
+    else:
+        # Imagen única
+        frames.append(ds.pixel_array)
+
+    series = {"frames": frames}
+    cache_series[doc_id] = series
+    return series
+
+
+def frame_to_base64(frame):
+    """Convierte un frame numpy a PNG base64."""
+    if frame.dtype != np.uint8:
+        frame = (frame.astype(np.float32) / frame.max() * 255).astype(np.uint8)
+    img = Image.fromarray(frame)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 # Cargamos la SECRET_KEY desde el archivo .env
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
@@ -923,6 +968,36 @@ def resetear_clave(token):
         conn.close()
 
     return render_template('resetear_clave.html')
+
+@app.route("/documentos/<doc_id>")
+def visor(doc_id):
+    """
+    Página del visor: solo carga el HTML con el esqueleto.
+    """
+    return render_template("visor_dicom.html", doc_id=doc_id)
+
+
+@app.route("/api/documentos/<doc_id>/frames_count")
+def frames_count(doc_id):
+    """
+    Devuelve el número total de frames de un documento DICOM.
+    """
+    series = load_dicom_series(doc_id)
+    return jsonify({"total_frames": len(series["frames"])})
+
+
+@app.route("/api/documentos/<doc_id>/frame/<int:frame_index>")
+def get_frame(doc_id, frame_index):
+    """
+    Devuelve un frame específico como imagen base64.
+    """
+    series = load_dicom_series(doc_id)
+    frames = series["frames"]
+    if frame_index < 0 or frame_index >= len(frames):
+        abort(404, "Frame fuera de rango")
+
+    img_b64 = frame_to_base64(frames[frame_index])
+    return jsonify({"frame_index": frame_index, "image_base64": img_b64})
 
 # --- INDEXACIÓN AUTOMÁTICA AL INICIAR LA APLICACIÓN ---
 # Esta condición es un truco para asegurar que la indexación se ejecute

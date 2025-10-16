@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Visor DICOM</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin: 20px; }
+    img { max-width: 90%; max-height: 80vh; border: 1px solid #ccc; }
+    button { margin: 10px; padding: 10px 20px; font-size: 16px; }
+    #status { margin-top: 10px; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>Visor DICOM</h1>
+  <img id="dicomImage" src="" alt="Imagen DICOM">
+  <div>
+    <button id="prevBtn">Anterior</button>
+    <button id="nextBtn">Siguiente</button>
+  </div>
+  <div id="status">Cargando...</div>
+
+  <script>
+    const docId = "{{ doc_id }}";  // viene desde Flask
+    let totalFrames = 0;
+    let currentFrame = 0;
+
+    async function init() {
+      // Pedir cuántos frames tiene
+      const res = await fetch(`/api/documentos/${docId}/frames_count`);
+      const data = await res.json();
+      totalFrames = data.total_frames;
+      document.getElementById("status").textContent =
+        `Total de imágenes: ${totalFrames}`;
+      loadFrame(0);
+    }
+
+    async function loadFrame(index) {
+      if (index < 0 || index >= totalFrames) return;
+      const res = await fetch(`/api/documentos/${docId}/frame/${index}`);
+      const data = await res.json();
+      document.getElementById("dicomImage").src =
+        "data:image/png;base64," + data.image_base64;
+      currentFrame = index;
+      document.getElementById("status").textContent =
+        `Mostrando imagen ${currentFrame + 1} de ${totalFrames}`;
+    }
+
+    document.getElementById("prevBtn").addEventListener("click", () => {
+      if (currentFrame > 0) loadFrame(currentFrame - 1);
+    });
+
+    document.getElementById("nextBtn").addEventListener("click", () => {
+      if (currentFrame < totalFrames - 1) loadFrame(currentFrame + 1);
+    });
+
+    init();
+  </script>
+</body>
+</html>
