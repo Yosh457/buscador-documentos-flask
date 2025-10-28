@@ -37,8 +37,8 @@
                         {% for rol in todos_los_roles %}
                             <div class="flex items-center">
                                 <input type="checkbox" name="roles" value="{{ rol.id }}" id="rol-{{ rol.id }}"
-                                       class="h-4 w-4 text-blue-600 border-gray-300 rounded"
-                                       {% if rol.nombre in roles_usuario %} checked {% endif %}>
+                                    class="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                                    {% if rol in usuario.roles %} checked {% endif %}>
                                 <label for="rol-{{ rol.id }}" class="ml-3 block text-sm font-medium text-gray-700">{{ rol.nombre|title }}</label>
                             </div>
                         {% endfor %}
@@ -53,8 +53,8 @@
                         {% for categoria in todas_las_categorias %}
                             <div class="flex items-center">
                                 <input type="checkbox" name="permisos" value="{{ categoria.id }}" id="cat-{{ categoria.id }}" 
-                                       class="h-4 w-4 text-blue-600 border-gray-300 rounded"
-                                       {% if categoria.id in permisos_usuario %} checked {% endif %}>
+                                    class="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                                    {% if categoria in usuario.permisos %} checked {% endif %}>
                                 <label for="cat-{{ categoria.id }}" class="ml-3 block text-sm font-medium text-gray-700">{{ categoria.nombre }}</label>
                             </div>
                         {% endfor %}

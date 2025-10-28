@@ -1,11 +1,12 @@
 # app.py
-
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import joinedload # La usaremos para optimizar
+from sqlalchemy import or_
+from models import db, Usuario, Rol, Categoria, Documento, LogBusqueda
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import os
 import smtplib
-import pymysql
-import math
 import secrets
 import re
 import sys
@@ -89,14 +90,14 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 # Inicializamos Bcrypt para encriptar contraseñas
 bcrypt = Bcrypt(app)
 # Configuración de la conexión a la base de datos
-db_config = {
-    'host': 'localhost',
-    'user': 'root',
-    'password': os.getenv('MYSQL_PASSWORD'),
-    'db': 'buscador_docs_db',
-    'charset': 'utf8mb4',
-    'cursorclass': pymysql.cursors.DictCursor
-}
+# Configuración de SQLAlchemy
+# Lee la contraseña del .env como ya hacías
+MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD')
+app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+pymysql://root:{MYSQL_PASSWORD}@localhost/buscador_docs_db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Inicializa la base de datos con nuestra app
+db.init_app(app)
 
 # --- CONFIGURACIÓN DE FLASK-LOGIN ---
 login_manager = LoginManager()
@@ -133,107 +134,69 @@ def add_header(response):
     response.headers['Expires'] = '-1'
     return response
 
-# --- MODELO DE USUARIO ---
-# Esta clase representa a nuestros usuarios. UserMixin le da las propiedades
-# que Flask-Login necesita (is_authenticated, is_active, etc.)
-class Usuario(UserMixin):
-    def __init__(self, id, nombre_completo, email, password_hash, esta_activo, debe_cambiar_clave, permisos=[], roles=[]):
-        self.id = id
-        self.nombre_completo = nombre_completo
-        self.email = email
-        self.password_hash = password_hash
-        self.esta_activo = esta_activo
-        self.debe_cambiar_clave = debe_cambiar_clave
-        self.permisos = permisos # Para el buscador
-        self.roles = roles       # Para el panel de admin
-
-    def check_password(self, password):
-        return bcrypt.check_password_hash(self.password_hash, password)
-
 # --- USER_LOADER (ACTUALIZADO PARA CARGAR AMBOS: ROLES Y PERMISOS) ---
 @login_manager.user_loader
 def load_user(user_id):
-    conn = pymysql.connect(**db_config)
-    try:
-        with conn.cursor() as cursor:
-            # Obtenemos los datos del usuario
-            cursor.execute("SELECT * FROM usuarios WHERE id = %s", (user_id,))
-            user_data = cursor.fetchone()
-            if not user_data:
-                return None
-
-            # Obtenemos los PERMISOS de búsqueda del usuario
-            cursor.execute("""
-                SELECT c.nombre, c.ruta_carpeta FROM categorias c
-                JOIN usuario_permisos up ON c.id = up.categoria_id
-                WHERE up.usuario_id = %s
-            """, (user_id,))
-            permisos_data = cursor.fetchall()
-            
-            # Obtenemos los ROLES del usuario
-            cursor.execute("""
-                SELECT r.nombre FROM roles r
-                JOIN usuario_roles ur ON r.id = ur.role_id
-                WHERE ur.usuario_id = %s
-            """, (user_id,))
-            roles_data = cursor.fetchall()
-            # Convertimos la lista de diccionarios a una lista simple de nombres de rol
-            roles = [item['nombre'] for item in roles_data]
-            
-            return Usuario(
-                id=user_data['id'],
-                nombre_completo=user_data['nombre_completo'],
-                email=user_data['email'],
-                password_hash=user_data['password_hash'],
-                esta_activo=user_data['esta_activo'],
-                debe_cambiar_clave=user_data['debe_cambiar_clave'],
-                permisos=permisos_data,
-                roles=roles  # <-- Añadimos los roles al objeto
-            )
-    finally:
-        conn.close()
-    return None
+    # Simplemente le pedimos a SQLAlchemy el usuario por su ID.
+    # Las relaciones (roles, permisos) se cargarán automáticamente
+    # cuando se accedan gracias al 'lazy='dynamic''
+    return Usuario.query.get(int(user_id))
 
 # --- ¡NUEVA RUTA Y LÓGICA PARA INDEXAR ARCHIVOS! ---
 def actualizar_indice():
     """
-    Escanea las carpetas de red definidas en la tabla 'categorias'
-    y actualiza la tabla 'documentos' con los archivos encontrados.
+    Escanea las carpetas definidas en 'categorias' y actualiza la
+    tabla 'documentos' usando SQLAlchemy.
     """
-    conn = pymysql.connect(**db_config)
-    archivos_indexados = 0
-    try:
-        with conn.cursor() as cursor:
-            # 1. Obtenemos todas las categorías (ej: Fichas Clínicas y su ruta de red)
-            cursor.execute("SELECT id, ruta_carpeta FROM categorias")
-            categorias = cursor.fetchall()
+    # ¡IMPORTANTE! Se necesita un contexto de aplicación
+    # para que SQLAlchemy funcione fuera de una ruta normal.
+    with app.app_context():
 
-            # 2. Vaciamos la tabla de documentos para empezar desde cero
-            cursor.execute("TRUNCATE TABLE documentos")
+        # 1. Obtenemos todas las categorías desde el ORM
+        categorias = Categoria.query.all()
+        if not categorias:
+            print("No hay categorías definidas en la base de datos. Saltando indexación.")
+            return 0
 
-            # 3. Recorremos cada categoría para buscar archivos
-            for categoria in categorias:
-                ruta_base = categoria['ruta_carpeta']
-                categoria_id = categoria['id']
-                
-                if os.path.exists(ruta_base):
-                    # Usamos os.walk() para recorrer todas las subcarpetas
-                    for dirpath, _, filenames in os.walk(ruta_base):
-                        for archivo in filenames:
-                            # Creamos la ruta completa y el nombre del archivo
-                            ruta_completa = os.path.join(dirpath, archivo)
-                            nombre_archivo = archivo
-                            
-                            # Insertamos el archivo en nuestra tabla de índice
-                            sql_insert = "INSERT INTO documentos (nombre_archivo, ruta_completa, categoria_id) VALUES (%s, %s, %s)"
-                            cursor.execute(sql_insert, (nombre_archivo, ruta_completa, categoria_id))
-                            archivos_indexados += 1
-            
-            conn.commit()
-    finally:
-        conn.close()
-    
-    return archivos_indexados
+        print("Borrando índice de documentos antiguo...")
+        # 2. Vaciamos la tabla de documentos usando el ORM
+        # (db.session.query(Documento).delete() es más rápido que objeto por objeto)
+        db.session.query(Documento).delete()
+
+        nuevos_documentos = []
+        archivos_indexados = 0
+
+        # 3. Recorremos cada categoría para buscar archivos
+        for categoria in categorias:
+            ruta_base = categoria.ruta_carpeta
+
+            if os.path.exists(ruta_base):
+                print(f"Indexando categoría: {categoria.nombre} en {ruta_base}...")
+                for dirpath, _, filenames in os.walk(ruta_base):
+                    for archivo in filenames:
+                        ruta_completa = os.path.join(dirpath, archivo)
+
+                        # 4. Creamos los objetos Documento en memoria
+                        doc = Documento(
+                            nombre_archivo=archivo,
+                            ruta_completa=ruta_completa,
+                            categoria_id=categoria.id # Usamos el ID del objeto
+                        )
+                        nuevos_documentos.append(doc)
+                        archivos_indexados += 1
+            else:
+                print(f"ADVERTENCIA: La ruta {ruta_base} para la categoría '{categoria.nombre}' no existe.")
+
+        # 5. Guardamos todos los documentos en la BD en una sola operación
+        # (Esto es MUCHO más rápido que hacer un INSERT por cada archivo)
+        if nuevos_documentos:
+            print(f"Añadiendo {len(nuevos_documentos)} nuevos documentos a la base de datos...")
+            db.session.add_all(nuevos_documentos)
+
+        # 6. Confirmamos la transacción
+        db.session.commit()
+
+        return archivos_indexados
 
 # --- ¡NUEVA FUNCIÓN PARA ENVIAR CORREOS DE RESETEO! ---
 def enviar_correo_reseteo(usuario, token):
@@ -249,11 +212,11 @@ def enviar_correo_reseteo(usuario, token):
     msg['Subject'] = 'Restablecimiento de Contraseña - Buscador de Documentos'
     msg['From'] = f"Sistema Buscador <{remitente}>"
     # ¡CORRECCIÓN! El destinatario es el email del usuario que lo solicitó.
-    msg['To'] = usuario['email']
+    msg['To'] = usuario.email
     
     url_reseteo = url_for('resetear_clave', token=token, _external=True)
     cuerpo = f"""
-    <p>Hola {usuario['nombre_completo']},</p>
+    <p>Hola {usuario.nombre_completo},</p>
     <p>Hemos recibido una solicitud para restablecer tu contraseña. Haz clic en el siguiente enlace para continuar:</p>
     <p><a href="{url_reseteo}" style="padding: 10px 15px; background-color: #0d6efd; color: white; text-decoration: none; border-radius: 5px;">Restablecer mi contraseña</a></p>
     <p>Si no solicitaste esto, puedes ignorar este correo.</p>
@@ -267,7 +230,7 @@ def enviar_correo_reseteo(usuario, token):
         server.login(remitente, contrasena)
         server.send_message(msg)
         server.quit()
-        print(f"Correo de reseteo enviado exitosamente a {usuario['email']}")
+        print(f"Correo de reseteo enviado exitosamente a {usuario.email}")
     except Exception as e:
         print(f"Error al enviar correo de reseteo: {e}")
 
@@ -296,36 +259,31 @@ def login():
     if request.method == 'POST':
         email = request.form.get('email')
         password = request.form.get('password')
-        conn = pymysql.connect(**db_config)
-        try:
-            with conn.cursor() as cursor:
-                # La consulta ahora también trae el estado 'esta_activo'
-                cursor.execute("SELECT * FROM usuarios WHERE email = %s", (email,))
-                user_data = cursor.fetchone()
 
-                # 1. Verificamos si el usuario existe y la contraseña es correcta
-                if user_data and bcrypt.check_password_hash(user_data['password_hash'], password):
-                    
-                    # --- ¡NUEVA VERIFICACIÓN DE ESTADO! ---
-                    # 2. Verificamos si la cuenta está activa
-                    if not user_data['esta_activo']:
-                        flash('Tu cuenta ha sido bloqueada. Por favor, contacta a un administrador.', 'danger')
-                        return redirect(url_for('login'))
-                    
-                    # 3. Si todo está bien, creamos el objeto y lo logueamos
-                    usuario = load_user(user_data['id'])
-                    login_user(usuario)
-                    
-                    flash('¡Has iniciado sesión exitosamente!', 'success')
-                    # --- ¡LÓGICA DE REDIRECCIÓN FINAL! ---
-                    if usuario.debe_cambiar_clave:
-                        return redirect(url_for('cambiar_clave'))
-                    else:
-                        return redirect(url_for('menu'))
-                else:
-                    flash('Email o contraseña incorrectos.', 'danger')
-        finally:
-            conn.close()
+        # --- Lógica con SQLAlchemy ---
+        # 1. Buscar al usuario por email
+        usuario = Usuario.query.filter_by(email=email).first()
+
+        # 2. Verificar si existe y la contraseña es correcta
+        if usuario and usuario.check_password(password):
+
+            # 3. Verificar si está activo
+            if not usuario.esta_activo:
+                flash('Tu cuenta ha sido bloqueada. Por favor, contacta a un administrador.', 'danger')
+                return redirect(url_for('login'))
+
+            # 4. Loguear al usuario
+            login_user(usuario)
+            flash('¡Has iniciado sesión exitosamente!', 'success')
+
+            # 5. Redirigir
+            if usuario.debe_cambiar_clave:
+                return redirect(url_for('cambiar_clave'))
+            else:
+                return redirect(url_for('menu'))
+        else:
+            flash('Email o contraseña incorrectos.', 'danger')
+
     return render_template('login.html')
 
 @app.route('/menu')
@@ -336,39 +294,31 @@ def menu():
 
 @app.route('/registro', methods=['GET', 'POST'])
 def registro():
-    # Si el método es POST, significa que el usuario envió el formulario
     if request.method == 'POST':
-        # Obtenemos los datos del formulario
         nombre = request.form.get('nombre')
         email = request.form.get('email')
         password = request.form.get('password')
 
-        conn = pymysql.connect(**db_config)
-        try:
-            with conn.cursor() as cursor:
-                # 1. Verificamos si el email ya existe
-                cursor.execute("SELECT email FROM usuarios WHERE email = %s", (email,))
-                if cursor.fetchone():
-                    flash('Ese correo electrónico ya está en uso.', 'danger')
-                    return redirect(url_for('registro'))
+        # --- Lógica con SQLAlchemy ---
+        # 1. Verificamos si el email ya existe
+        usuario_existente = Usuario.query.filter_by(email=email).first()
+        if usuario_existente:
+            flash('Ese correo electrónico ya está en uso.', 'danger')
+            return redirect(url_for('registro'))
 
-                # 2. Si no existe, encriptamos la contraseña
-                hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
+        # 2. Creamos el nuevo usuario
+        nuevo_usuario = Usuario(nombre_completo=nombre, email=email)
+        nuevo_usuario.set_password(password)
 
-                # 3. Insertamos el nuevo usuario en la base de datos
-                cursor.execute(
-                    "INSERT INTO usuarios (nombre_completo, email, password_hash) VALUES (%s, %s, %s)",
-                    (nombre, email, hashed_password)
-                )
-            conn.commit()
-        finally:
-            conn.close()
+        # Nota: No asignamos roles ni permisos aquí, es un registro público.
 
-        # 4. Mostramos un mensaje de éxito y redirigimos al login
+        # 3. Guardamos en la BD
+        db.session.add(nuevo_usuario)
+        db.session.commit()
+
         flash('¡Cuenta creada exitosamente! Ya puedes iniciar sesión.', 'success')
         return redirect(url_for('login'))
 
-    # Si el método es GET, simplemente mostramos la página de registro
     return render_template('registro.html')
 
 # --- ¡NUEVA RUTA PARA CERRAR SESIÓN! ---
@@ -388,44 +338,47 @@ def buscador():
     motivo = request.args.get('motivo', '')
     resultados = []
 
-    # Obtenemos la información de la categoría actual (nombre y ruta)
-    categoria_actual = next((p for p in current_user.permisos if p['nombre'] == categoria_nombre), None)
+    # --- Lógica con SQLAlchemy ---
 
-    if categoria_nombre and not categoria_actual:
+    # 1. Obtenemos el objeto Categoria (ya no es un dict)
+    categoria_actual = Categoria.query.filter_by(nombre=categoria_nombre).first()
+
+    # 2. Verificamos el permiso (¡ahora mucho más simple!)
+    # 'current_user.permisos' es la relación de SQLAlchemy
+    if not categoria_actual or categoria_actual not in current_user.permisos:
         flash(f"Acceso denegado a la categoría '{categoria_nombre}'.", 'danger')
         return redirect(url_for('menu'))
 
     if termino_busqueda and motivo:
-        if categoria_actual:
-            # --- ¡LA LÓGICA DE BÚSQUEDA AHORA ES UNA CONSULTA SQL! ---
-            conn = pymysql.connect(**db_config)
-            try:
-                with conn.cursor() as cursor:
-                    # 1. Guardamos la búsqueda en el log
-                    sql_log = "INSERT INTO log_busquedas (usuario_id, categoria_buscada, termino_busqueda, motivo) VALUES (%s, %s, %s, %s)"
-                    cursor.execute(sql_log, (current_user.id, categoria_actual['nombre'], termino_busqueda, motivo))
-                    conn.commit()
+        try:
+            # 3. Guardamos la búsqueda en el log
+            nuevo_log = LogBusqueda(
+                usuario_id=current_user.id,
+                categoria_buscada=categoria_actual.nombre,
+                termino_busqueda=termino_busqueda,
+                motivo=motivo
+            )
+            db.session.add(nuevo_log)
 
-                    # 2. Buscamos en la tabla 'documentos' usando LIKE
-                    # El formato f"%{...}%" busca el texto en cualquier parte del nombre del archivo
-                    sql_search = """
-                        SELECT d.nombre_archivo, d.ruta_completa 
-                        FROM documentos d
-                        JOIN categorias c ON d.categoria_id = c.id
-                        WHERE c.nombre = %s AND d.nombre_archivo LIKE %s
-                    """
-                    cursor.execute(sql_search, (categoria_nombre, f"%{termino_busqueda}%"))
-                    resultados_db = cursor.fetchall()
+            # 4. Buscamos en la tabla 'documentos' usando el ORM
+            resultados_db = Documento.query.filter(
+                Documento.categoria == categoria_actual, # Filtramos por el objeto
+                Documento.nombre_archivo.like(f"%{termino_busqueda}%")
+            ).all()
 
-                    # Preparamos los resultados para la plantilla
-                    for fila in resultados_db:
-                        ruta_base = categoria_actual['ruta_carpeta']
-                        resultados.append({
-                            'nombre_mostrado': os.path.relpath(fila['ruta_completa'], ruta_base),
-                            'ruta_completa': fila['ruta_completa']
-                        })
-            finally:
-                conn.close()
+            # 5. Confirmamos la transacción (guarda el log)
+            db.session.commit()
+
+            # 6. Preparamos los resultados para la plantilla
+            for fila in resultados_db:
+                resultados.append({
+                    'nombre_mostrado': os.path.relpath(fila.ruta_completa, categoria_actual.ruta_carpeta),
+                    'ruta_completa': fila.ruta_completa
+                })
+        except Exception as e:
+            db.session.rollback() # Revertimos si algo falla (ej: el log)
+            print(f"Error durante la búsqueda: {e}")
+            flash("Ocurrió un error al realizar la búsqueda.", "danger")
 
     elif termino_busqueda and not motivo:
         flash("Debe proporcionar un motivo para realizar la búsqueda.", 'danger')
@@ -434,7 +387,7 @@ def buscador():
                            resultados=resultados, 
                            busqueda_actual=termino_busqueda, 
                            motivo_actual=motivo,
-                           categoria=categoria_actual)
+                           categoria=categoria_actual) # Pasamos el objeto
 
 # --- ¡NUEVA RUTA PARA EL PANEL DE ADMINISTRACIÓN! ---
 @app.route('/admin')
@@ -444,63 +397,50 @@ def admin_panel():
     # --- Configuración de Paginación ---
     USERS_POR_PAGINA = 10
     pagina_actual = request.args.get('page', 1, type=int)
-    offset = (pagina_actual - 1) * USERS_POR_PAGINA
 
-    # --- Lógica de Filtros y Búsqueda ---
+    # --- Lógica de Filtros (¡ahora como variables!) ---
     filtro_rol_id = request.args.get('rol_id', '')
     filtro_estado = request.args.get('estado', '')
     filtro_busqueda = request.args.get('busqueda', '')
-    
-    clausulas_where = []
-    parametros = []
-    
-    base_sql = """
-        FROM usuarios u
-        LEFT JOIN usuario_roles ur ON u.id = ur.usuario_id
-        LEFT JOIN roles r ON ur.role_id = r.id
-    """
-    
+
+    # --- ¡Aquí comienza la magia de SQLAlchemy! ---
+
+    # 1. Creamos la consulta base.
+    # Usamos joinedload() para cargar los roles en la misma consulta
+    # y así evitar el problema N+1 en la plantilla.
+    query = Usuario.query.options(joinedload(Usuario.roles))
+
+    # 2. Aplicamos los filtros dinámicamente
     if filtro_rol_id:
-        clausulas_where.append("ur.role_id = %s")
-        parametros.append(filtro_rol_id)
+        # .join() es necesario para filtrar por una relación Many-to-Many
+        query = query.join(Usuario.roles).filter(Rol.id == filtro_rol_id)
+
     if filtro_estado in ['0', '1']:
-        clausulas_where.append("u.esta_activo = %s")
-        parametros.append(filtro_estado)
-    # --- ¡NUEVA LÓGICA DE BÚSQUEDA! ---
+        # Convertimos '0'/'1' a False/True
+        query = query.filter(Usuario.esta_activo == (filtro_estado == '1'))
+
     if filtro_busqueda:
-        # Buscamos en el nombre O en el email
-        clausulas_where.append("(u.nombre_completo LIKE %s OR u.email LIKE %s)")
-        parametros.extend([f"%{filtro_busqueda}%", f"%{filtro_busqueda}%"])
-        
-    where_sql = "WHERE " + " AND ".join(clausulas_where) if clausulas_where else ""
+        # Usamos or_() para buscar en el nombre O en el email
+        query = query.filter(
+            or_(
+                Usuario.nombre_completo.like(f"%{filtro_busqueda}%"),
+                Usuario.email.like(f"%{filtro_busqueda}%")
+            )
+        )
 
-    conn = pymysql.connect(**db_config)
-    try:
-        with conn.cursor() as cursor:
-            # 1. Obtenemos el TOTAL de usuarios que coinciden con los filtros
-            sql_count = f"SELECT COUNT(DISTINCT u.id) as total {base_sql} {where_sql}"
-            cursor.execute(sql_count, tuple(parametros))
-            total_usuarios = cursor.fetchone()['total']
-            total_paginas = math.ceil(total_usuarios / USERS_POR_PAGINA)
+    # 3. Obtenemos el objeto de paginación
+    # .paginate() hace el COUNT, LIMIT y OFFSET... ¡todo en una línea!
+    pagination = query.order_by(Usuario.nombre_completo).paginate(
+        page=pagina_actual, per_page=USERS_POR_PAGINA, error_out=False
+    )
 
-            # 2. Obtenemos la PORCIÓN de usuarios para la página actual
-            sql_select = f"""
-                SELECT u.id, u.nombre_completo, u.email, u.esta_activo, GROUP_CONCAT(r.nombre SEPARATOR ', ') as roles
-                {base_sql}
-                {where_sql}
-                GROUP BY u.id
-                ORDER BY u.nombre_completo
-                LIMIT %s OFFSET %s
-            """
-            cursor.execute(sql_select, tuple(parametros) + (USERS_POR_PAGINA, offset))
-            usuarios = cursor.fetchall()
-            
-            # 3. Obtenemos todos los roles para llenar el dropdown del filtro
-            cursor.execute("SELECT id, nombre FROM roles ORDER BY nombre")
-            todos_los_roles = cursor.fetchall()
-    finally:
-        conn.close()
-    
+    # Los usuarios para la página actual están en .items
+    usuarios = pagination.items 
+
+    # 4. Obtenemos todos los roles para el dropdown del filtro
+    todos_los_roles = Rol.query.order_by(Rol.nombre).all()
+
+    # 5. Guardamos los filtros para la paginación
     filtros_activos = {
         'rol_id': filtro_rol_id,
         'estado': filtro_estado,
@@ -508,11 +448,12 @@ def admin_panel():
     }
 
     return render_template('admin_panel.html', 
-                           usuarios=usuarios,
-                           pagina_actual=pagina_actual,
-                           total_paginas=total_paginas,
-                           todos_los_roles=todos_los_roles,
-                           filtros=filtros_activos)
+                        usuarios=usuarios,         # <-- Para la tabla
+                        pagination=pagination,     # <-- ¡El objeto mágico para las macros!
+                        pagina_actual=pagina_actual, # <-- Lo mantenemos por ahora
+                        total_paginas=pagination.pages, # <-- Obtenido gratis
+                        todos_los_roles=todos_los_roles,
+                        filtros=filtros_activos)
 
 @app.route('/admin/indexar')
 @login_required
@@ -528,126 +469,84 @@ def indexar_archivos():
 @login_required
 @admin_required
 def editar_usuario(user_id):
-    conn = pymysql.connect(**db_config)
-    try:
-        # --- LÓGICA PARA CUANDO SE ENVÍA EL FORMULARIO (POST) ---
-        if request.method == 'POST':
-            # 1. Obtenemos todos los datos del formulario
-            nuevo_nombre = request.form.get('nombre_completo')
-            nuevo_email = request.form.get('email')
-            nuevo_estado = request.form.get('esta_activo') # Esto será '1' o '0'
-            nuevos_roles_ids = request.form.getlist('roles')
-            nuevos_permisos_ids = request.form.getlist('permisos')
+    # 1. Obtenemos el usuario de la BD (o un 404 si no existe)
+    usuario = Usuario.query.get_or_404(user_id)
 
-            with conn.cursor() as cursor:
-                # 2. Actualizamos los datos básicos en la tabla 'usuarios'
-                sql_update_user = "UPDATE usuarios SET nombre_completo = %s, email = %s, esta_activo = %s WHERE id = %s"
-                cursor.execute(sql_update_user, (nuevo_nombre, nuevo_email, nuevo_estado, user_id))
+    if request.method == 'POST':
+        # 2. Actualizamos los datos simples
+        usuario.nombre_completo = request.form.get('nombre_completo')
+        usuario.email = request.form.get('email')
+        usuario.esta_activo = (request.form.get('esta_activo') == '1')
 
-                # 3. Actualizamos los roles (borrar y re-insertar)
-                cursor.execute("DELETE FROM usuario_roles WHERE usuario_id = %s", (user_id,))
-                if nuevos_roles_ids:
-                    datos_roles = [(user_id, rol_id) for rol_id in nuevos_roles_ids]
-                    cursor.executemany("INSERT INTO usuario_roles (usuario_id, role_id) VALUES (%s, %s)", datos_roles)
+        # 3. Actualizamos las relaciones (igual que en crear_usuario)
+        roles_ids = request.form.getlist('roles')
+        permisos_ids = request.form.getlist('permisos')
 
-                # 4. Actualizamos los permisos (borrar y re-insertar)
-                cursor.execute("DELETE FROM usuario_permisos WHERE usuario_id = %s", (user_id,))
-                if nuevos_permisos_ids:
-                    datos_permisos = [(user_id, perm_id) for perm_id in nuevos_permisos_ids]
-                    cursor.executemany("INSERT INTO usuario_permisos (usuario_id, categoria_id) VALUES (%s, %s)", datos_permisos)
-            
-            conn.commit()
-            flash(f'Usuario actualizado exitosamente.', 'success')
-            return redirect(url_for('admin_panel'))
+        usuario.roles = Rol.query.filter(Rol.id.in_(roles_ids)).all()
+        usuario.permisos = Categoria.query.filter(Categoria.id.in_(permisos_ids)).all()
 
-        # --- LÓGICA PARA CUANDO SE CARGA LA PÁGINA (GET) ---
-        with conn.cursor() as cursor:
-            # Obtenemos datos del usuario
-            cursor.execute("SELECT * FROM usuarios WHERE id = %s", (user_id,))
-            usuario = cursor.fetchone()
-            
-            # Obtenemos todas las categorías posibles
-            cursor.execute("SELECT id, nombre FROM categorias")
-            todas_las_categorias = cursor.fetchall()
-            
-            # Obtenemos los permisos que el usuario ya tiene
-            cursor.execute("SELECT categoria_id FROM usuario_permisos WHERE usuario_id = %s", (user_id,))
-            permisos_actuales = cursor.fetchall()
-            permisos_usuario_ids = [p['categoria_id'] for p in permisos_actuales]
+        # 4. Guardamos los cambios
+        db.session.commit()
 
-            # Obtenemos todos los roles posibles
-            cursor.execute("SELECT id, nombre FROM roles")
-            todos_los_roles = cursor.fetchall()
+        flash(f'Usuario actualizado exitosamente.', 'success')
+        return redirect(url_for('admin_panel'))
 
-            # Obtenemos los roles que el usuario ya tiene
-            cursor.execute("SELECT r.nombre FROM roles r JOIN usuario_roles ur ON r.id = ur.role_id WHERE ur.usuario_id = %s", (user_id,))
-            roles_actuales = cursor.fetchall()
-            roles_usuario_nombres = [r['nombre'] for r in roles_actuales]
+    # --- LÓGICA GET (¡mira qué simple!) ---
+    # Solo necesitamos la lista completa de roles y categorías
+    todos_los_roles = Rol.query.order_by(Rol.nombre).all()
+    todas_las_categorias = Categoria.query.order_by(Categoria.nombre).all()
 
-    finally:
-        conn.close()
-
+    # Pasamos el objeto 'usuario' directamente a la plantilla.
+    # Jinja2 podrá acceder a 'usuario.roles' y 'usuario.permisos'
+    # para marcar los checkboxes correctos.
     return render_template('editar_usuario.html', 
                            usuario=usuario, 
                            todas_las_categorias=todas_las_categorias, 
-                           permisos_usuario=permisos_usuario_ids,
-                           todos_los_roles=todos_los_roles,
-                           roles_usuario=roles_usuario_nombres)
+                           todos_los_roles=todos_los_roles)
 
 # --- ¡NUEVA RUTA PARA CREAR USUARIOS DESDE EL PANEL DE ADMIN! ---
 @app.route('/admin/crear', methods=['GET', 'POST'])
 @login_required
 @admin_required
 def crear_usuario():
-    conn = pymysql.connect(**db_config)
-    try:
-        # --- LÓGICA PARA CUANDO SE ENVÍA EL FORMULARIO (POST) ---
-        if request.method == 'POST':
-            nombre = request.form.get('nombre_completo')
-            email = request.form.get('email')
-            password = request.form.get('password')
-            roles_ids = request.form.getlist('roles')
-            permisos_ids = request.form.getlist('permisos')
-            forzar_cambio = request.form.get('forzar_cambio_clave') == '1'
-            
-            with conn.cursor() as cursor:
-                # 1. Verificamos que el email no esté en uso
-                cursor.execute("SELECT email FROM usuarios WHERE email = %s", (email,))
-                if cursor.fetchone():
-                    flash('Ese correo electrónico ya está en uso por otro usuario.', 'danger')
-                    # Si hay error, volvemos a cargar los datos para mostrar el formulario de nuevo
-                    return redirect(url_for('crear_usuario'))
+    if request.method == 'POST':
+        email = request.form.get('email')
 
-                # 2. Encriptamos la contraseña y creamos el usuario
-                hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
-                cursor.execute("INSERT INTO usuarios (nombre_completo, email, password_hash, debe_cambiar_clave) VALUES (%s, %s, %s, %s)",
-                               (nombre, email, hashed_password, forzar_cambio))
+        # 1. Verificamos que el email no esté en uso
+        usuario_existente = Usuario.query.filter_by(email=email).first()
+        if usuario_existente:
+            flash('Ese correo electrónico ya está en uso por otro usuario.', 'danger')
+            return redirect(url_for('crear_usuario'))
 
-                # 3. Obtenemos el ID del usuario recién creado
-                new_user_id = cursor.lastrowid
+        # 2. Creamos el nuevo objeto Usuario
+        nuevo_usuario = Usuario(
+            nombre_completo=request.form.get('nombre_completo'),
+            email=email,
+            debe_cambiar_clave=(request.form.get('forzar_cambio_clave') == '1')
+        )
 
-                # 4. Asignamos los roles y permisos seleccionados
-                if roles_ids:
-                    datos_roles = [(new_user_id, rol_id) for rol_id in roles_ids]
-                    cursor.executemany("INSERT INTO usuario_roles (usuario_id, role_id) VALUES (%s, %s)", datos_roles)
-                
-                if permisos_ids:
-                    datos_permisos = [(new_user_id, perm_id) for perm_id in permisos_ids]
-                    cursor.executemany("INSERT INTO usuario_permisos (usuario_id, categoria_id) VALUES (%s, %s)", datos_permisos)
+        # 3. Establecemos la contraseña (usando el método del modelo)
+        nuevo_usuario.set_password(request.form.get('password'))
 
-            conn.commit()
-            flash('Usuario creado exitosamente.', 'success')
-            return redirect(url_for('admin_panel'))
+        # 4. Asignamos los roles y permisos (¡la magia del ORM!)
+        roles_ids = request.form.getlist('roles')
+        permisos_ids = request.form.getlist('permisos')
 
-        # --- LÓGICA PARA CUANDO SE CARGA LA PÁGINA (GET) ---
-        # Necesitamos cargar los roles y categorías para mostrarlos en los checkboxes
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT id, nombre FROM roles")
-            todos_los_roles = cursor.fetchall()
-            cursor.execute("SELECT id, nombre FROM categorias")
-            todas_las_categorias = cursor.fetchall()
-    finally:
-        conn.close()
+        # SQLAlchemy es lo suficientemente inteligente como para manejar esto:
+        nuevo_usuario.roles = Rol.query.filter(Rol.id.in_(roles_ids)).all()
+        nuevo_usuario.permisos = Categoria.query.filter(Categoria.id.in_(permisos_ids)).all()
+
+        # 5. Guardamos en la base de datos
+        db.session.add(nuevo_usuario)
+        db.session.commit()
+
+        flash('Usuario creado exitosamente.', 'success')
+        return redirect(url_for('admin_panel'))
+
+    # --- LÓGICA GET (se simplifica también) ---
+    # Simplemente obtenemos todos los roles y categorías
+    todos_los_roles = Rol.query.order_by(Rol.nombre).all()
+    todas_las_categorias = Categoria.query.order_by(Categoria.nombre).all()
 
     return render_template('crear_usuario.html', 
                            todos_los_roles=todos_los_roles, 
@@ -805,64 +704,39 @@ def ver_logs():
     # --- Configuración de Paginación ---
     LOGS_POR_PAGINA = 15
     pagina_actual = request.args.get('page', 1, type=int)
-    offset = (pagina_actual - 1) * LOGS_POR_PAGINA
 
     # --- Lógica de Filtros ---
     filtro_usuario_id = request.args.get('usuario_id', '')
     filtro_categoria = request.args.get('categoria', '')
     
-    # Construimos la consulta SQL dinámicamente para seguridad
-    clausulas_where = []
-    parametros = []
-    
+    # 1. Consulta base (optimizada con joinedload)
+    # Cargamos los datos del 'usuario' en la misma consulta
+    query = LogBusqueda.query.options(joinedload(LogBusqueda.usuario))
+
+    # 2. Aplicamos filtros
     if filtro_usuario_id:
-        clausulas_where.append("l.usuario_id = %s")
-        parametros.append(filtro_usuario_id)
+        query = query.filter(LogBusqueda.usuario_id == filtro_usuario_id)
     if filtro_categoria:
-        clausulas_where.append("l.categoria_buscada = %s")
-        parametros.append(filtro_categoria)
+        query = query.filter(LogBusqueda.categoria_buscada == filtro_categoria)
         
-    where_sql = " AND ".join(clausulas_where) if clausulas_where else "1=1"
-
-    conn = pymysql.connect(**db_config)
-    try:
-        with conn.cursor() as cursor:
-            # 1. Obtenemos el TOTAL de registros que coinciden con los filtros (para calcular las páginas)
-            sql_count = f"SELECT COUNT(l.id) as total FROM log_busquedas l WHERE {where_sql}"
-            cursor.execute(sql_count, tuple(parametros))
-            total_logs = cursor.fetchone()['total']
-            total_paginas = math.ceil(total_logs / LOGS_POR_PAGINA)
-
-            # 2. Obtenemos la PORCIÓN de registros para la página actual
-            sql_select = f"""
-                SELECT l.*, u.nombre_completo 
-                FROM log_busquedas l
-                JOIN usuarios u ON l.usuario_id = u.id
-                WHERE {where_sql}
-                ORDER BY l.timestamp DESC
-                LIMIT %s OFFSET %s
-            """
-            cursor.execute(sql_select, tuple(parametros) + (LOGS_POR_PAGINA, offset))
-            logs = cursor.fetchall()
-            
-            # 3. Obtenemos todos los usuarios y categorías para llenar los dropdowns de los filtros
-            cursor.execute("SELECT id, nombre_completo FROM usuarios ORDER BY nombre_completo")
-            todos_los_usuarios = cursor.fetchall()
-            cursor.execute("SELECT nombre FROM categorias ORDER BY nombre")
-            todas_las_categorias = cursor.fetchall()
-    finally:
-        conn.close()
+    # 3. Obtenemos el objeto de paginación
+    pagination = query.order_by(LogBusqueda.timestamp.desc()).paginate(
+        page=pagina_actual, per_page=LOGS_POR_PAGINA, error_out=False
+    )
     
-    # Guardamos los filtros actuales para pasarlos a los enlaces de paginación
+    # 4. Obtenemos datos para los dropdowns de filtros
+    todos_los_usuarios = Usuario.query.order_by(Usuario.nombre_completo).all()
+    todas_las_categorias = Categoria.query.order_by(Categoria.nombre).all()
+    
+    # 5. Guardamos filtros para la paginación
     filtros_activos = {
         'usuario_id': filtro_usuario_id,
         'categoria': filtro_categoria
     }
 
     return render_template('ver_logs.html', 
-                           logs=logs,
-                           pagina_actual=pagina_actual,
-                           total_paginas=total_paginas,
+                           logs=pagination.items,      # <-- Usamos los items de la paginación
+                           pagination=pagination,    # <-- Pasamos el objeto completo
                            todos_los_usuarios=todos_los_usuarios,
                            todas_las_categorias=todas_las_categorias,
                            filtros=filtros_activos)
@@ -878,25 +752,23 @@ def cambiar_clave():
             flash('Las contraseñas no coinciden.', 'danger')
             return redirect(url_for('cambiar_clave'))
 
-        # --- ¡NUEVA VALIDACIÓN DE SEGURIDAD EN EL BACKEND! ---
         if not es_contrasena_segura(nueva_pass):
             flash('La contraseña no cumple los requisitos: mínimo 8 caracteres, una mayúscula y un número.', 'danger')
             return redirect(url_for('cambiar_clave'))
-        
-        # Encriptamos y actualizamos la contraseña
-        hashed_password = bcrypt.generate_password_hash(nueva_pass).decode('utf-8')
-        conn = pymysql.connect(**db_config)
-        try:
-            with conn.cursor() as cursor:
-                # Actualizamos la contraseña y desactivamos la bandera de cambio
-                sql = "UPDATE usuarios SET password_hash = %s, debe_cambiar_clave = 0 WHERE id = %s"
-                cursor.execute(sql, (hashed_password, current_user.id))
-            conn.commit()
-        finally:
-            conn.close()
+
+        # --- Lógica con SQLAlchemy ---
+        # 1. Obtenemos el usuario actual (ya es un objeto SQLAlchemy)
+        usuario = Usuario.query.get(current_user.id)
+
+        # 2. Actualizamos la contraseña y la bandera
+        usuario.set_password(nueva_pass)
+        usuario.debe_cambiar_clave = False
+
+        # 3. Guardamos en la base de datos
+        db.session.commit()
 
         flash('Contraseña actualizada exitosamente. Por favor, inicia sesión de nuevo.', 'success')
-        logout_user() # Cerramos la sesión para forzar un nuevo login con la nueva clave
+        logout_user() # Forzamos el re-login
         return redirect(url_for('login'))
 
     return render_template('cambiar_clave.html')
@@ -905,80 +777,73 @@ def cambiar_clave():
 def solicitar_reseteo():
     if request.method == 'POST':
         email = request.form.get('email')
-        conn = pymysql.connect(**db_config)
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT * FROM usuarios WHERE email = %s", (email,))
-                usuario = cursor.fetchone()
 
-                if usuario:
-                    # --- Lógica de usuario ENCONTRADO ---
-                    # Generar token seguro y fecha de expiración
-                    token = secrets.token_hex(16)
-                    expiracion = datetime.utcnow() + timedelta(hours=1)
+        # --- Lógica con SQLAlchemy ---
+        # 1. Buscamos al usuario
+        usuario = Usuario.query.filter_by(email=email).first()
 
-                    # Guardar token en la BD
-                    sql_update = "UPDATE usuarios SET reset_token = %s, reset_token_expiracion = %s WHERE id = %s"
-                    cursor.execute(sql_update, (token, expiracion, usuario['id']))
-                    conn.commit()
+        if usuario:
+            # 2. Generamos token y expiración
+            token = secrets.token_hex(16)
+            expiracion = datetime.utcnow() + timedelta(hours=1)
 
-                    # Enviar correo
-                    enviar_correo_reseteo(usuario, token)
-                    
-                    # Mensaje de ÉXITO (verde)
-                    flash(f'Se ha enviado un enlace para restablecer la contraseña a {email}.', 'success')
-                
-                else:
-                    # --- Lógica de usuario NO ENCONTRADO ---
-                    # Mensaje de ERROR (rojo)
-                    flash(f'El correo electrónico {email} no se encuentra registrado en el sistema.', 'danger')
+            # 3. Asignamos los valores al objeto usuario
+            usuario.reset_token = token
+            usuario.reset_token_expiracion = expiracion
 
-            # El redirect va AFUERA del try, pero DENTRO del 'if POST'
-            return redirect(url_for('login'))
-        
-        finally:
-            conn.close()
-            
+            # 4. Guardamos en la BD
+            db.session.commit()
+
+            # 5. Enviar correo (¡Necesitamos un pequeño ajuste aquí!)
+            # Tu función 'enviar_correo_reseteo' espera un diccionario.
+            # Vamos a pasarle el objeto 'usuario' y ajustaremos la función.
+            enviar_correo_reseteo(usuario, token) # Ajuste en el paso 4
+
+            flash(f'Se ha enviado un enlace para restablecer la contraseña a {email}.', 'success')
+
+        else:
+            flash(f'El correo electrónico {email} no se encuentra registrado en el sistema.', 'danger')
+
+        return redirect(url_for('login'))
+
     return render_template('solicitar_reseteo.html')
 
 @app.route('/resetear-clave/<token>', methods=['GET', 'POST'])
 def resetear_clave(token):
-    conn = pymysql.connect(**db_config)
-    try:
-        with conn.cursor() as cursor:
-            # Buscar usuario por token y verificar que no haya expirado
-            sql_find = "SELECT * FROM usuarios WHERE reset_token = %s AND reset_token_expiracion > %s"
-            cursor.execute(sql_find, (token, datetime.utcnow()))
-            usuario = cursor.fetchone()
 
-            if not usuario:
-                flash('El enlace de restablecimiento es inválido o ha expirado.', 'danger')
-                return redirect(url_for('solicitar_reseteo'))
+    # --- Lógica con SQLAlchemy ---
+    # 1. Buscamos al usuario por el token Y que no haya expirado
+    usuario = Usuario.query.filter(
+        Usuario.reset_token == token,
+        Usuario.reset_token_expiracion > datetime.utcnow()
+    ).first()
 
-            if request.method == 'POST':
-                nueva_pass = request.form.get('nueva_password')
-                confirmar_pass = request.form.get('confirmar_password')
+    if not usuario:
+        flash('El enlace de restablecimiento es inválido o ha expirado.', 'danger')
+        return redirect(url_for('solicitar_reseteo'))
 
-                if nueva_pass != confirmar_pass:
-                    flash('Las contraseñas no coinciden.', 'danger')
-                    return redirect(url_for('resetear_clave', token=token))
+    if request.method == 'POST':
+        nueva_pass = request.form.get('nueva_password')
+        confirmar_pass = request.form.get('confirmar_password')
 
-                # --- ¡NUEVA VALIDACIÓN DE SEGURIDAD EN EL BACKEND! ---
-                if not es_contrasena_segura(nueva_pass):
-                    flash('La contraseña no cumple los requisitos: mínimo 8 caracteres, una mayúscula y un número.', 'danger')
-                    return redirect(url_for('resetear_clave', token=token))
+        if nueva_pass != confirmar_pass:
+            flash('Las contraseñas no coinciden.', 'danger')
+            return redirect(url_for('resetear_clave', token=token))
 
-                # Encriptamos y actualizamos la contraseña
-                hashed_password = bcrypt.generate_password_hash(nueva_pass).decode('utf-8')
-                # Actualizar contraseña y anular token
-                sql_update = "UPDATE usuarios SET password_hash = %s, reset_token = NULL, reset_token_expiracion = NULL WHERE id = %s"
-                cursor.execute(sql_update, (hashed_password, usuario['id']))
-                conn.commit()
+        if not es_contrasena_segura(nueva_pass):
+            flash('La contraseña no cumple los requisitos: mínimo 8 caracteres, una mayúscula y un número.', 'danger')
+            return redirect(url_for('resetear_clave', token=token))
 
-                flash('Tu contraseña ha sido actualizada. Ya puedes iniciar sesión.', 'success')
-                return redirect(url_for('login'))
-    finally:
-        conn.close()
+        # 2. Actualizamos la contraseña y anulamos el token
+        usuario.set_password(nueva_pass)
+        usuario.reset_token = None
+        usuario.reset_token_expiracion = None
+
+        # 3. Guardamos en la BD
+        db.session.commit()
+
+        flash('Tu contraseña ha sido actualizada. Ya puedes iniciar sesión.', 'success')
+        return redirect(url_for('login'))
 
     return render_template('resetear_clave.html')
 
