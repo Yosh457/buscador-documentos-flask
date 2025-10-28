@@ -13,11 +13,12 @@
 
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
-            <div class="absolute top-5 w-full max-w-md mx-auto z-50">
+            <div class="absolute top-5 w-full max-w-lg mx-auto z-50 px-4">
                 {% for category, message in messages %}
-                    <div class="p-4 mb-4 text-sm rounded-lg shadow
+                    <div class="flash-message p-4 mb-4 text-sm rounded-lg shadow-lg
                         {% if category == 'success' %} bg-green-100 text-green-800
-                        {% else %} bg-red-100 text-red-800 {% endif %}"
+                        {% elif category == 'danger' %} bg-red-100 text-red-800
+                        {% else %} bg-yellow-100 text-yellow-800 {% endif %}" 
                         role="alert">
                         {{ message }}
                     </div>
@@ -39,5 +40,6 @@
     {% if current_user.is_authenticated %}
     <script src="{{ url_for('static', filename='inactivity.js') }}"></script>
     {% endif %}
+    <script src="{{ url_for('static', filename='flash_messages.js') }}"></script>
 </body>
 </html>

@@ -316,6 +316,7 @@ def login():
                     usuario = load_user(user_data['id'])
                     login_user(usuario)
                     
+                    flash('¡Has iniciado sesión exitosamente!', 'success')
                     # --- ¡LÓGICA DE REDIRECCIÓN FINAL! ---
                     if usuario.debe_cambiar_clave:
                         return redirect(url_for('cambiar_clave'))
@@ -375,7 +376,7 @@ def registro():
 @login_required
 def logout():
     logout_user()
-    flash('Has cerrado sesión exitosamente.', 'success')
+    flash('¡Has cerrado sesión exitosamente!', 'success')
     return redirect(url_for('login'))
 
 # --- BUSCADOR (VERSIÓN FINAL OPTIMIZADA CON ÍNDICE) ---
@@ -909,7 +910,9 @@ def solicitar_reseteo():
             with conn.cursor() as cursor:
                 cursor.execute("SELECT * FROM usuarios WHERE email = %s", (email,))
                 usuario = cursor.fetchone()
+
                 if usuario:
+                    # --- Lógica de usuario ENCONTRADO ---
                     # Generar token seguro y fecha de expiración
                     token = secrets.token_hex(16)
                     expiracion = datetime.utcnow() + timedelta(hours=1)
@@ -921,11 +924,21 @@ def solicitar_reseteo():
 
                     # Enviar correo
                     enviar_correo_reseteo(usuario, token)
+                    
+                    # Mensaje de ÉXITO (verde)
+                    flash(f'Se ha enviado un enlace para restablecer la contraseña a {email}.', 'success')
+                
+                else:
+                    # --- Lógica de usuario NO ENCONTRADO ---
+                    # Mensaje de ERROR (rojo)
+                    flash(f'El correo electrónico {email} no se encuentra registrado en el sistema.', 'danger')
 
-            flash('Si tu correo está en nuestro sistema, recibirás un enlace para restablecer tu contraseña.', 'info')
+            # El redirect va AFUERA del try, pero DENTRO del 'if POST'
             return redirect(url_for('login'))
+        
         finally:
             conn.close()
+            
     return render_template('solicitar_reseteo.html')
 
 @app.route('/resetear-clave/<token>', methods=['GET', 'POST'])

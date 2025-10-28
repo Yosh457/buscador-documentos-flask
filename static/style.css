@@ -55,3 +55,33 @@ body {
     background-color: #bb2d3b;
     border-color: #b02a37;
 }
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+}
+
+.flash-message {
+    animation: fadeIn 0.5s ease-out forwards;
+}
+
+.flash-message.fade-out {
+    animation: fadeOut 0.5s ease-in forwards;
+}
