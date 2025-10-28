@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, render_template, request, redirect, session, url_for, flash, abort, send_from_directory, send_file, render_template_string, jsonify
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
-from flask_bcrypt import Bcrypt
+from flask_wtf.csrf import CSRFProtect
 from dotenv import load_dotenv
 
 # --- FUNCIÓN PARA RESOLVER RUTAS EN EL EJECUTABLE ---
@@ -40,6 +40,8 @@ load_dotenv()
 app = Flask(__name__,
             static_folder=resource_path('static'),
             template_folder=resource_path('templates'))
+
+app.jinja_env.add_extension('jinja2.ext.do')
 
 # Carpeta donde guardas los DICOM (ajústala a tu ruta)
 DICOM_FOLDER = "dicoms"
@@ -87,8 +89,7 @@ def frame_to_base64(frame):
 
 # Cargamos la SECRET_KEY desde el archivo .env
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
-# Inicializamos Bcrypt para encriptar contraseñas
-bcrypt = Bcrypt(app)
+
 # Configuración de la conexión a la base de datos
 # Configuración de SQLAlchemy
 # Lee la contraseña del .env como ya hacías
@@ -99,18 +100,24 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Inicializa la base de datos con nuestra app
 db.init_app(app)
 
+# Inicializa la protección CSRF
+csrf = CSRFProtect()
+csrf.init_app(app)
+
 # --- CONFIGURACIÓN DE FLASK-LOGIN ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 # Le decimos a Flask-Login cuál es la ruta de nuestra página de login
 login_manager.login_view = 'login'
+login_manager.login_message = 'Por favor, inicia sesión para acceder a esta página.'
+login_manager.login_message_category = 'warning'
 
 # --- ¡NUEVO DECORADOR PARA PROTEGER RUTAS DE ADMIN! ---
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         # Simplemente revisamos si 'admin' está en la lista de roles del usuario
-        if 'admin' not in current_user.roles:
+        if not current_user.has_role('admin'):
             # Si el usuario no es admin, mostramos un error 403 (Prohibido)
             abort(403)
         return f(*args, **kwargs)
@@ -406,9 +413,7 @@ def admin_panel():
     # --- ¡Aquí comienza la magia de SQLAlchemy! ---
 
     # 1. Creamos la consulta base.
-    # Usamos joinedload() para cargar los roles en la misma consulta
-    # y así evitar el problema N+1 en la plantilla.
-    query = Usuario.query.options(joinedload(Usuario.roles))
+    query = Usuario.query
 
     # 2. Aplicamos los filtros dinámicamente
     if filtro_rol_id:
@@ -563,7 +568,7 @@ def servir_documento():
         abort(404)
 
     # Verificación de seguridad (misma lógica)
-    carpetas_permitidas = [p['ruta_carpeta'] for p in current_user.permisos]
+    carpetas_permitidas = [p.ruta_carpeta for p in current_user.permisos]
     tiene_permiso = any(ruta_archivo.startswith(base) for base in carpetas_permitidas)
     if not tiene_permiso or not os.path.exists(ruta_archivo):
         abort(403)

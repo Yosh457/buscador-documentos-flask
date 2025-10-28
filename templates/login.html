@@ -9,6 +9,7 @@
         </div>
         <h2 class="text-2xl font-bold text-center text-gray-800 mb-8">Acceso al Sistema</h2>
         <form action="{{ url_for('login') }}" method="post" class="space-y-6">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
             <div>
                 <label for="email" class="block text-sm font-medium text-gray-700">Correo Electrónico</label>
@@ -21,7 +22,7 @@
             <div class="text-center">
                 <button type="submit" class="w-full btn btn-primary">Ingresar</button>
             </div>
-             <div class="text-center text-sm text-gray-600">
+            <div class="text-center text-sm text-gray-600">
                 <a href="{{ url_for('solicitar_reseteo') }}" class="font-medium text-blue-600 hover:text-blue-500">¿Olvidaste tu contraseña?</a>
             </div>
         </form>

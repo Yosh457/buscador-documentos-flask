@@ -62,7 +62,13 @@
             <tr class="border-b hover:bg-gray-50">
                 <td class="py-3 px-4">{{ usuario.nombre_completo }}</td>
                 <td class="py-3 px-4">{{ usuario.email }}</td>
-                <td class="py-3 px-4">{{ usuario.roles or 'Sin roles' }}</td>
+                <td class="py-3 px-4 text-sm">
+                    {% if usuario.roles.all() %}
+                        {{ usuario.roles.all() | map(attribute='nombre') | join(', ') | title }}
+                    {% else %}
+                        <span class="text-gray-500">Sin roles</span>
+                    {% endif %}
+                </td>
                 <td class="py-3 px-4">
                     {% if usuario.esta_activo %}
                         <span class="bg-green-200 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded-full">Activo</span>

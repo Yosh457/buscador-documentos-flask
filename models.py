@@ -1,7 +1,7 @@
 # models.py
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
-from werkzeug.security import generate_password_hash, check_password_hash
+from flask_bcrypt import generate_password_hash, check_password_hash
 from datetime import datetime
 
 db = SQLAlchemy()
@@ -47,10 +47,19 @@ class Usuario(db.Model, UserMixin):
 
     # Métodos para contraseña
     def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
+        self.password_hash = generate_password_hash(password).decode('utf-8')
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+    
+    def has_role(self, role_name):
+        """
+        Verifica si el usuario tiene un rol específico por su nombre.
+        """
+        # self.roles es la consulta de SQLAlchemy (lazy='dynamic')
+        # Filtramos esa consulta para ver si algún rol coincide
+        # con el nombre y contamos si existe.
+        return self.roles.filter(Rol.nombre == role_name).count() > 0
 
 class Rol(db.Model):
     __tablename__ = 'roles'
