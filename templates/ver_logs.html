@@ -47,7 +47,7 @@
             {% for log in logs %}
             <tr class="border-b hover:bg-gray-50">
                 <td class="py-3 px-4 text-sm">{{ log.timestamp.strftime('%d-%m-%Y %H:%M:%S') }}</td>
-                <td class="py-3 px-4 text-sm">{{ log.nombre_completo }}</td>
+                <td class="py-3 px-4 text-sm">{{ log.usuario.nombre_completo }}</td>
                 <td class="py-3 px-4 text-sm">{{ log.categoria_buscada }}</td>
                 <td class="py-3 px-4 text-sm">{{ log.termino_busqueda }}</td>
                 <td class="py-3 px-4 text-sm">{{ log.motivo }}</td>

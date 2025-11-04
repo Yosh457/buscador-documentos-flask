@@ -9,27 +9,31 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+<body class="flex flex-col min-h-screen bg-gray-100">
 
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            <div class="absolute top-5 w-full max-w-lg mx-auto z-50 px-4">
-                {% for category, message in messages %}
-                    <div class="flash-message p-4 mb-4 text-sm rounded-lg shadow-lg
-                        {% if category == 'success' %} bg-green-100 text-green-800
-                        {% elif category == 'danger' %} bg-red-100 text-red-800
-                        {% else %} bg-yellow-100 text-yellow-800 {% endif %}" 
-                        role="alert">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-            </div>
-        {% endif %}
-    {% endwith %}
+    <main class="w-full flex-grow">
 
-    <div class="w-full">
-        {% block content %}{% endblock %}
-    </div>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="absolute top-5 w-full max-w-lg mx-auto z-50 px-4 left-0 right-0">
+                    {% for category, message in messages %}
+                        <div class="flash-message p-4 mb-4 text-sm rounded-lg shadow-lg
+                            {% if category == 'success' %} bg-green-100 text-green-800
+                            {% elif category == 'danger' %} bg-red-100 text-red-800
+                            {% else %} bg-yellow-100 text-yellow-800 {% endif %}" 
+                            role="alert">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <div class="w-full">
+            {% block content %}{% endblock %}
+        </div>
+
+    </main>
     <div id="inactivity-modal" class="fixed inset-0 z-50 items-center justify-center hidden flex" style="background-color: rgba(0, 0, 0, 0.6);">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 m-4 text-center">
             <h3 class="text-lg font-bold text-yellow-600 mb-2">Tu sesión está a punto de expirar</h3>
@@ -37,6 +41,12 @@
             <button id="stay-connected-btn" class="btn btn-primary">Permanecer Conectado</button>
         </div>
     </div>
+
+    <footer class="w-full text-white text-center p-4" style="background-color: #275c80;">
+        <p class="text-sm">
+            Desarrollado por la Unidad de Tics del Departamento de Salud de la Municipalidad de Alto Hospicio
+        </p>
+    </footer>
     {% if current_user.is_authenticated %}
     <script src="{{ url_for('static', filename='inactivity.js') }}"></script>
     {% endif %}

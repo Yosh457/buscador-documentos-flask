@@ -1,11 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Acceso al Sistema{% endblock %}
 {% block content %}
-<div class="w-full max-w-md mx-auto">
+<div class="w-full max-w-md mx-auto pt-36 pb-12">
     <div class="bg-white p-8 rounded-xl shadow-lg">
         <div class="flex justify-center items-center space-x-6 mb-6">
             <img src="{{ url_for('static', filename='logoRedAps.png') }}" alt="Logo Red de Atención Primaria" class="h-20">
             <img src="{{ url_for('static', filename='logoMaho.png') }}" alt="Logo Municipalidad Alto Hospicio" class="h-20">
+        </div>
+        <div class="text-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">Repositorio Documental</h1>
         </div>
         <h2 class="text-2xl font-bold text-center text-gray-800 mb-8">Acceso al Sistema</h2>
         <form action="{{ url_for('login') }}" method="post" class="space-y-6">
